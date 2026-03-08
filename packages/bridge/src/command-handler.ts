@@ -10,7 +10,7 @@ export class CommandHandler {
         await this.handleCommand(message);
         break;
       case 'launch':
-        await this.client.createSession(message.projectPath, message.agent);
+        await this.client.createSession(message.projectPath, message.agent, undefined, message.message);
         break;
       case 'open_terminal':
         await this.client.attachTerminal(message.agentId);

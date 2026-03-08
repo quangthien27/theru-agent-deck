@@ -91,10 +91,10 @@ namespace Loupedeck.AgentDeckPlugin.Commands
         {
             return status switch
             {
-                AgentStatus.Idle => new BitmapColor(30, 120, 50),     // Green
-                AgentStatus.Working => new BitmapColor(160, 140, 20), // Yellow
-                AgentStatus.Waiting => new BitmapColor(180, 40, 40),  // Red
-                AgentStatus.Error => new BitmapColor(150, 30, 30),    // Dark red
+                AgentStatus.Idle => new BitmapColor(90, 90, 90),      // Gray - ready
+                AgentStatus.Working => new BitmapColor(30, 120, 50),  // Green - active
+                AgentStatus.Waiting => new BitmapColor(180, 160, 30), // Yellow - needs input
+                AgentStatus.Error => new BitmapColor(180, 40, 40),    // Red - error
                 _ => new BitmapColor(50, 50, 50)                      // Gray
             };
         }
@@ -103,9 +103,9 @@ namespace Loupedeck.AgentDeckPlugin.Commands
         {
             return agent.Status switch
             {
-                AgentStatus.Idle => "idle",
-                AgentStatus.Working => "working...",
-                AgentStatus.Waiting => "APPROVE!",
+                AgentStatus.Idle => "ready",
+                AgentStatus.Working => "running",
+                AgentStatus.Waiting => "INPUT!",
                 AgentStatus.Error => "error",
                 _ => "offline"
             };

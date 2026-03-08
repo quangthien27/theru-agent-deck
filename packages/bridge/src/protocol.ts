@@ -101,6 +101,7 @@ export interface LaunchAgent {
   type: 'launch';
   projectPath: string;
   agent: string;
+  message?: string;
 }
 
 export interface OpenTerminal {

@@ -155,9 +155,13 @@ export class AgentDeckClient extends EventEmitter {
 
   // ── CLI: session management ───────────────────────────────
 
-  async createSession(projectPath: string, agent: string, title?: string): Promise<string> {
-    const args = [`add`, `"${projectPath}"`, `-c`, agent];
-    if (title) args.push(`-title`, `"${title}"`);
+  async createSession(projectPath: string, agent: string, title?: string, message?: string): Promise<string> {
+    // Resolve ~ to actual home directory (exec doesn't expand ~ inside quotes)
+    const resolved = projectPath.replace(/^~/, process.env.HOME || '~');
+    // Use `launch` instead of `add` — it does add + start in one step
+    const args = [`launch`, `"${resolved}"`, `-c`, agent, `-q`];
+    if (title) args.push(`-t`, `"${title}"`);
+    if (message) args.push(`-m`, `"${message.replace(/"/g, '\\"')}"`);
     const { stdout } = await exec(`${this.bin} ${args.join(' ')}`);
     return stdout.trim();
   }

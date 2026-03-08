@@ -1,0 +1,15 @@
+{
+  "search.exclude": {
+    "**/sandbox": true
+  },
+  "explorer.autoRevealExclude": {
+    "**/node_modules": false
+  },
+  "workbench.colorCustomizations": {
+    "titleBar.activeForeground": "#fff",
+    "titleBar.inactiveForeground": "#fff",
+    "titleBar.activeBackground": "#003daf",
+    "titleBar.inactiveBackground": "#003daf"
+  },
+  "window.title": "TheRu AgentDeck${separator}${activeEditorShort}${separator}${rootName}"
+}

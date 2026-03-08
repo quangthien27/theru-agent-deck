@@ -1,0 +1,518 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  background: #111;
+  color: #ddd;
+  font-family: "SF Mono", "Fira Code", "Cascadia Code", monospace;
+  min-height: 100vh;
+  display: flex;
+  justify-content: center;
+  padding: 24px;
+}
+
+.simulator {
+  max-width: 820px;
+  width: 100%;
+}
+
+/* Top bar */
+.topbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 24px;
+}
+
+.topbar h1 {
+  font-size: 16px;
+  font-weight: 500;
+  color: #888;
+  letter-spacing: 0.5px;
+}
+
+.connection {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: #666;
+}
+
+.connection .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #444;
+  transition: background 0.3s;
+}
+
+.connection.connected .dot {
+  background: #4caf50;
+}
+
+.connection.connected .label {
+  color: #4caf50;
+}
+
+/* Console layout */
+.console-layout {
+  display: flex;
+  gap: 32px;
+  margin-bottom: 24px;
+}
+
+/* Keypad */
+.keypad-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 100px);
+  gap: 6px;
+}
+
+.lcd-btn {
+  width: 100px;
+  height: 100px;
+  border: 2px solid #222;
+  border-radius: 8px;
+  background: #1e1e1e;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  transition: border-color 0.15s, transform 0.1s;
+  position: relative;
+  overflow: hidden;
+}
+
+.lcd-btn:hover {
+  border-color: #444;
+}
+
+.lcd-btn:active {
+  transform: scale(0.95);
+}
+
+/* Agent slot rendering */
+.lcd-btn .agent-name {
+  font-size: 16px;
+  font-weight: 700;
+  color: #fff;
+  letter-spacing: 0.5px;
+}
+
+.lcd-btn .agent-status {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.7);
+  margin-top: 6px;
+}
+
+.lcd-btn .agent-type {
+  position: absolute;
+  bottom: 4px;
+  left: 6px;
+  font-size: 9px;
+  color: rgba(255, 255, 255, 0.45);
+  text-transform: uppercase;
+}
+
+/* Empty slot */
+.lcd-btn.empty {
+  background: #1e1e1e;
+}
+
+.lcd-btn.empty::after {
+  content: "--";
+  color: #505050;
+  font-size: 14px;
+}
+
+/* Status colors */
+.lcd-btn.status-idle     { background: #5a5a5a; }
+.lcd-btn.status-working  { background: #1e7832; }
+.lcd-btn.status-waiting  { background: #b4a01e; }
+.lcd-btn.status-error    { background: #b42828; }
+.lcd-btn.status-offline  { background: #323232; }
+
+/* Pulsing for waiting (needs input) */
+.lcd-btn.status-waiting {
+  animation: pulse-yellow 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse-yellow {
+  0%, 100% { background: #b4a01e; }
+  50% { background: #d4c030; }
+}
+
+/* Pulsing for error */
+.lcd-btn.status-error {
+  animation: pulse-red 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse-red {
+  0%, 100% { background: #b42828; }
+  50% { background: #d44040; }
+}
+
+/* Control buttons (bottom row) */
+.ctrl-btn {
+  background: #282832 !important;
+  animation: none !important;
+}
+
+.ctrl-btn .ctrl-icon {
+  font-size: 26px;
+  color: #c8c8ff;
+}
+
+.ctrl-btn .ctrl-count {
+  font-size: 20px;
+  font-weight: 700;
+  color: #c8dcff;
+}
+
+.ctrl-btn .ctrl-label {
+  font-size: 11px;
+  color: #b4b8c8;
+  margin-top: 2px;
+}
+
+.ctrl-btn .ctrl-sub {
+  font-size: 10px;
+  color: #ff8c8c;
+  margin-top: 2px;
+}
+
+#btn-custom {
+  background: #323232 !important;
+}
+
+#btn-custom .ctrl-label {
+  color: #a0a0a0;
+}
+
+/* Dialpad */
+.dialpad {
+  flex: 1;
+}
+
+.dialpad-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: auto 1fr auto;
+  gap: 8px;
+  height: 100%;
+}
+
+.dial-btn {
+  padding: 12px 16px;
+  border: 2px solid #2a2a2a;
+  border-radius: 8px;
+  background: #1a1a1a;
+  color: #999;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, transform 0.1s;
+  letter-spacing: 0.5px;
+}
+
+.dial-btn:hover {
+  background: #252525;
+  border-color: #444;
+}
+
+.dial-btn:active {
+  transform: scale(0.95);
+}
+
+.dial-btn.yes {
+  border-color: #1e5028;
+  color: #5cb870;
+}
+
+.dial-btn.yes:hover {
+  background: #142818;
+  border-color: #2d7840;
+}
+
+.dial-btn.no {
+  border-color: #502020;
+  color: #c86060;
+}
+
+.dial-btn.no:hover {
+  background: #281414;
+  border-color: #784040;
+}
+
+/* Dial */
+.dial-area {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px;
+}
+
+.dial {
+  width: 90px;
+  height: 90px;
+  border-radius: 50%;
+  border: 3px solid #333;
+  background: #1a1a1a;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: grab;
+  position: relative;
+  user-select: none;
+}
+
+.dial:hover {
+  border-color: #555;
+}
+
+.dial-knob {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #555;
+  position: absolute;
+  top: 12px;
+}
+
+.dial-label {
+  font-size: 9px;
+  color: #666;
+  text-align: center;
+  padding: 4px;
+  line-height: 1.3;
+}
+
+/* Roller */
+.roller-area {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+}
+
+.roller-btn {
+  width: 36px;
+  height: 28px;
+  border: 2px solid #2a2a2a;
+  border-radius: 6px;
+  background: #1a1a1a;
+  color: #666;
+  font-size: 12px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s;
+}
+
+.roller-btn:hover {
+  background: #252525;
+  border-color: #444;
+}
+
+.roller-btn:active {
+  background: #333;
+}
+
+.roller-label {
+  font-size: 9px;
+  color: #555;
+  text-align: center;
+  min-height: 14px;
+}
+
+/* Ring overlay */
+.ring-overlay {
+  display: none;
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.6);
+  z-index: 100;
+  justify-content: center;
+  align-items: center;
+  backdrop-filter: blur(4px);
+}
+
+.ring-overlay.active {
+  display: flex;
+}
+
+.ring-panel {
+  width: 480px;
+  max-height: 70vh;
+  background: #1a1a1e;
+  border: 2px solid #333;
+  border-radius: 16px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.ring-header {
+  padding: 16px 20px;
+  border-bottom: 1px solid #2a2a2a;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.ring-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 20px;
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  color: #bbb;
+}
+
+.ring-content .diff-add {
+  color: #6fbf73;
+  background: rgba(111, 191, 115, 0.08);
+}
+
+.ring-content .diff-remove {
+  color: #e06060;
+  background: rgba(224, 96, 96, 0.08);
+}
+
+.ring-content .diff-hunk {
+  color: #6688cc;
+}
+
+.ring-footer {
+  padding: 12px 20px;
+  border-top: 1px solid #2a2a2a;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 11px;
+  color: #666;
+}
+
+/* Ring list items */
+.ring-list-item {
+  padding: 10px 14px;
+  border-radius: 8px;
+  margin-bottom: 4px;
+  color: #bbb;
+  transition: background 0.1s;
+  white-space: normal;
+  line-height: 1.5;
+}
+
+.ring-list-item.active {
+  background: #252538;
+  color: #fff;
+  outline: 2px solid #5588cc;
+  outline-offset: -2px;
+}
+
+.ring-dim {
+  color: #666;
+  font-size: 11px;
+}
+
+.ring-waiting {
+  color: #d4b030;
+}
+
+.ring-detail {
+  padding: 6px 0;
+  white-space: normal;
+}
+
+.ring-detail .ring-dim {
+  display: inline-block;
+  min-width: 64px;
+  margin-right: 8px;
+}
+
+/* Status dot (inline, used in Ring lists) */
+.ring-status-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 6px;
+  vertical-align: middle;
+}
+
+.ring-status-dot.status-idle    { background: #888; }
+.ring-status-dot.status-working { background: #4caf50; }
+.ring-status-dot.status-waiting { background: #d4b030; }
+.ring-status-dot.status-error   { background: #e05050; }
+.ring-status-dot.status-offline { background: #444; }
+
+/* Log panel */
+.log-panel {
+  border: 1px solid #222;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.log-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  background: #161616;
+  font-size: 11px;
+  color: #666;
+}
+
+.log-header button {
+  background: none;
+  border: 1px solid #333;
+  border-radius: 4px;
+  color: #666;
+  font-family: inherit;
+  font-size: 10px;
+  padding: 2px 8px;
+  cursor: pointer;
+}
+
+.log-header button:hover {
+  border-color: #555;
+  color: #999;
+}
+
+.log-content {
+  height: 140px;
+  overflow-y: auto;
+  padding: 8px 12px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: #555;
+}
+
+.log-content .log-entry {
+  display: flex;
+  gap: 8px;
+}
+
+.log-content .log-time {
+  color: #444;
+  flex-shrink: 0;
+}
+
+.log-content .log-msg { color: #777; }
+.log-content .log-msg.state { color: #5588bb; }
+.log-content .log-msg.event { color: #bb8855; }
+.log-content .log-msg.cmd { color: #55bb88; }
+.log-content .log-msg.error { color: #bb5555; }
+.log-content .log-msg.connect { color: #55bb55; }

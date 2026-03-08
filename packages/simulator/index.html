@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AgentDeck Simulator</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="simulator">
+    <header class="topbar">
+      <h1>AgentDeck Simulator</h1>
+      <div class="connection" id="connection">
+        <span class="dot"></span>
+        <span class="label">Disconnected</span>
+      </div>
+    </header>
+
+    <div class="console-layout">
+      <!-- Keypad: 3x3 LCD buttons -->
+      <div class="keypad">
+        <div class="keypad-grid">
+          <button class="lcd-btn" data-slot="0" id="slot-0"></button>
+          <button class="lcd-btn" data-slot="1" id="slot-1"></button>
+          <button class="lcd-btn" data-slot="2" id="slot-2"></button>
+          <button class="lcd-btn" data-slot="3" id="slot-3"></button>
+          <button class="lcd-btn" data-slot="4" id="slot-4"></button>
+          <button class="lcd-btn" data-slot="5" id="slot-5"></button>
+          <button class="lcd-btn ctrl-btn" id="btn-new">
+            <span class="ctrl-icon">+</span>
+            <span class="ctrl-label">NEW</span>
+          </button>
+          <button class="lcd-btn ctrl-btn" id="btn-status">
+            <span class="ctrl-count" id="status-count">0</span>
+            <span class="ctrl-label">STATUS</span>
+            <span class="ctrl-sub" id="status-waiting"></span>
+          </button>
+          <button class="lcd-btn ctrl-btn" id="btn-custom">
+            <span class="ctrl-label">CFG</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Dialpad -->
+      <div class="dialpad">
+        <div class="dialpad-grid">
+          <button class="dial-btn" id="btn-undo">UNDO</button>
+          <button class="dial-btn" id="btn-pause">PAUSE</button>
+          <div class="dial-area">
+            <div class="dial" id="dial">
+              <div class="dial-knob"></div>
+              <div class="dial-label" id="dial-label">No agent</div>
+            </div>
+          </div>
+          <div class="roller-area">
+            <button class="roller-btn" id="roller-up">&#9650;</button>
+            <div class="roller-label" id="roller-label"></div>
+            <button class="roller-btn" id="roller-down">&#9660;</button>
+          </div>
+          <button class="dial-btn yes" id="btn-yes">YES</button>
+          <button class="dial-btn no" id="btn-no">NO</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Actions Ring overlay -->
+    <div class="ring-overlay" id="ring-overlay">
+      <div class="ring-panel" id="ring-panel">
+        <div class="ring-header" id="ring-header"></div>
+        <div class="ring-content" id="ring-content"></div>
+        <div class="ring-footer" id="ring-footer"></div>
+      </div>
+    </div>
+
+    <!-- Log panel -->
+    <div class="log-panel">
+      <div class="log-header">
+        <span>Event Log</span>
+        <button id="log-clear">Clear</button>
+      </div>
+      <div class="log-content" id="log-content"></div>
+    </div>
+  </div>
+
+  <script src="simulator.js"></script>
+</body>
+</html>
