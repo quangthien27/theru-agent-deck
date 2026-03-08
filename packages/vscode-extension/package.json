@@ -1,0 +1,123 @@
+{
+  "name": "agentdeck",
+  "displayName": "AgentDeck",
+  "description": "Physical control surface for managing multiple AI coding agents via MX Creative Console",
+  "version": "0.1.0",
+  "publisher": "agentdeck",
+  "engines": {
+    "vscode": "^1.93.0"
+  },
+  "enabledApiProposals": [
+    "terminalDataWriteEvent"
+  ],
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "agentdeck",
+          "title": "AgentDeck",
+          "icon": "resources/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "agentdeck": [
+        {
+          "id": "agentdeck.agents",
+          "name": "Agents"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "agentdeck.newAgent",
+        "title": "AgentDeck: New Agent",
+        "icon": "$(add)"
+      },
+      {
+        "command": "agentdeck.approve",
+        "title": "AgentDeck: Approve",
+        "icon": "$(check)"
+      },
+      {
+        "command": "agentdeck.reject",
+        "title": "AgentDeck: Reject",
+        "icon": "$(close)"
+      },
+      {
+        "command": "agentdeck.kill",
+        "title": "AgentDeck: Kill Agent",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "agentdeck.showTerminal",
+        "title": "AgentDeck: Show Terminal",
+        "icon": "$(terminal)"
+      },
+      {
+        "command": "agentdeck.showDiff",
+        "title": "AgentDeck: Show Diff",
+        "icon": "$(diff)"
+      },
+      {
+        "command": "agentdeck.openSimulator",
+        "title": "AgentDeck: Open Simulator",
+        "icon": "$(device-desktop)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "agentdeck.newAgent",
+          "when": "view == agentdeck.agents",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "agentdeck.approve",
+          "when": "view == agentdeck.agents && viewItem == agent-waiting",
+          "group": "inline@1"
+        },
+        {
+          "command": "agentdeck.reject",
+          "when": "view == agentdeck.agents && viewItem == agent-waiting",
+          "group": "inline@2"
+        },
+        {
+          "command": "agentdeck.showTerminal",
+          "when": "view == agentdeck.agents",
+          "group": "inline@3"
+        },
+        {
+          "command": "agentdeck.kill",
+          "when": "view == agentdeck.agents",
+          "group": "context@1"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "lint": "eslint src",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.85.0",
+    "@types/ws": "^8.5.13",
+    "typescript": "^5.7.0"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}

@@ -1,10 +1,63 @@
-<!DOCTYPE html>
+import * as vscode from 'vscode';
+import * as fs from 'fs';
+import * as path from 'path';
+
+let panel: vscode.WebviewPanel | undefined;
+
+export function openSimulatorWebview(context: vscode.ExtensionContext): void {
+  // If panel already exists, reveal it
+  if (panel) {
+    panel.reveal(vscode.ViewColumn.Beside);
+    return;
+  }
+
+  panel = vscode.window.createWebviewPanel(
+    'agentdeck.simulator',
+    'AgentDeck Simulator',
+    vscode.ViewColumn.Beside,
+    {
+      enableScripts: true,
+      retainContextWhenHidden: true,
+    }
+  );
+
+  panel.webview.html = getWebviewContent(context);
+
+  panel.onDidDispose(() => {
+    panel = undefined;
+  }, null, context.subscriptions);
+}
+
+function getWebviewContent(context: vscode.ExtensionContext): string {
+  // Try to load from simulator package (sibling directory)
+  const extDir = context.extensionPath;
+  const simulatorDir = path.resolve(extDir, '..', 'simulator');
+
+  let css = '';
+  let js = '';
+
+  const cssPath = path.join(simulatorDir, 'style.css');
+  const jsPath = path.join(simulatorDir, 'simulator.js');
+
+  if (fs.existsSync(cssPath) && fs.existsSync(jsPath)) {
+    css = fs.readFileSync(cssPath, 'utf-8');
+    js = fs.readFileSync(jsPath, 'utf-8');
+  } else {
+    // Fallback: bundled copies or error
+    return `<html><body style="color:#ccc;padding:24px;font-family:monospace;">
+      <h2>Simulator files not found</h2>
+      <p>Expected at: ${simulatorDir}</p>
+      <p>Make sure packages/simulator exists alongside the extension.</p>
+    </body></html>`;
+  }
+
+  return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>AgentDeck Simulator</title>
-  <link rel="stylesheet" href="style.css">
+  <style>${css}</style>
 </head>
 <body>
   <div class="simulator">
@@ -17,7 +70,6 @@
     </header>
 
     <div class="console-layout">
-      <!-- Keypad: 3x3 LCD buttons -->
       <div class="keypad">
         <div class="keypad-grid">
           <button class="lcd-btn"></button>
@@ -32,7 +84,6 @@
         </div>
       </div>
 
-      <!-- Dialpad -->
       <div class="dialpad">
         <div class="dialpad-grid">
           <button class="dial-btn" id="btn-undo">KILL</button>
@@ -54,7 +105,6 @@
       </div>
     </div>
 
-    <!-- Actions Ring overlay -->
     <div class="ring-overlay" id="ring-overlay">
       <div class="ring-panel" id="ring-panel">
         <div class="ring-header" id="ring-header"></div>
@@ -63,7 +113,6 @@
       </div>
     </div>
 
-    <!-- Log panel -->
     <div class="log-panel">
       <div class="log-header">
         <span>Event Log</span>
@@ -73,6 +122,7 @@
     </div>
   </div>
 
-  <script src="simulator.js"></script>
+  <script>${js}</script>
 </body>
-</html>
+</html>`;
+}

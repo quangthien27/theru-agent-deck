@@ -1,0 +1,155 @@
+import * as vscode from 'vscode';
+import { AgentManager } from './agent-manager';
+import { WSServer } from './ws-server';
+import { AgentSidebarProvider } from './sidebar-provider';
+import { registerCommands } from './commands';
+import type { ClientMessage, AgentStatus } from './protocol';
+
+const WS_PORT = 9999;
+
+let agentManager: AgentManager;
+let wsServer: WSServer;
+let sidebarProvider: AgentSidebarProvider;
+let statusBarItem: vscode.StatusBarItem;
+
+export function activate(context: vscode.ExtensionContext) {
+  const outputChannel = vscode.window.createOutputChannel('AgentDeck');
+  context.subscriptions.push(outputChannel);
+
+  try {
+  // ── Agent Manager ──────────────────────────────────────
+  agentManager = new AgentManager(outputChannel);
+
+  // ── Sidebar ────────────────────────────────────────────
+  sidebarProvider = new AgentSidebarProvider();
+  const treeView = vscode.window.createTreeView('agentdeck.agents', {
+    treeDataProvider: sidebarProvider,
+    showCollapseAll: false,
+  });
+
+  // ── Status Bar ─────────────────────────────────────────
+  statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);
+  statusBarItem.command = 'agentdeck.newAgent';
+  updateStatusBar([]);
+  statusBarItem.show();
+
+  // ── WebSocket Server ───────────────────────────────────
+  wsServer = new WSServer();
+  wsServer.start(WS_PORT);
+  wsServer.setMessageHandler((msg: ClientMessage) => {
+    handleClientMessage(msg);
+  });
+
+  // ── State broadcast ────────────────────────────────────
+  agentManager.on('stateChange', (agents) => {
+    sidebarProvider.updateAgents(agents);
+    updateStatusBar(agents);
+    wsServer.broadcast({ type: 'state', agents });
+  });
+
+  agentManager.on('statusChange', (agentId: string, prev: AgentStatus, next: AgentStatus) => {
+    // Emit events for Logi Plugin haptics
+    if (next === 'waiting') {
+      wsServer.broadcast({ type: 'event', agentId, event: 'needs_approval' });
+    } else if (next === 'idle' && prev === 'working') {
+      wsServer.broadcast({ type: 'event', agentId, event: 'completed' });
+    } else if (next === 'error') {
+      wsServer.broadcast({ type: 'event', agentId, event: 'error' });
+    }
+  });
+
+  // ── Commands ───────────────────────────────────────────
+  registerCommands(context, agentManager);
+
+  // ── Cleanup ────────────────────────────────────────────
+  context.subscriptions.push(
+    treeView,
+    statusBarItem,
+    { dispose: () => agentManager.dispose() },
+    { dispose: () => wsServer.stop() },
+    { dispose: () => sidebarProvider.dispose() },
+  );
+
+  outputChannel.appendLine(`AgentDeck activated. WebSocket server on :${WS_PORT}`);
+
+  } catch (err: any) {
+    outputChannel.appendLine(`[AgentDeck] Activation error: ${err.message}\n${err.stack}`);
+    vscode.window.showErrorMessage(`AgentDeck failed to activate: ${err.message}`);
+  }
+}
+
+export function deactivate() {
+  agentManager?.dispose();
+  wsServer?.stop();
+}
+
+// ── Handle messages from Logi Plugin / Simulator ──────────
+
+function handleClientMessage(msg: ClientMessage): void {
+  switch (msg.type) {
+    case 'command':
+      switch (msg.action) {
+        case 'approve':
+          agentManager.approve(msg.agentId);
+          break;
+        case 'reject':
+          agentManager.reject(msg.agentId);
+          break;
+        case 'pause':
+          agentManager.pause(msg.agentId);
+          break;
+        case 'kill':
+          agentManager.kill(msg.agentId);
+          break;
+      }
+      break;
+
+    case 'launch': {
+      // Resolve project path — WebSocket clients may send "." or empty
+      let projectPath = msg.projectPath;
+      if (!projectPath || projectPath === '.') {
+        const folders = vscode.workspace.workspaceFolders;
+        projectPath = folders?.[0]?.uri.fsPath || '';
+      }
+      if (!projectPath) {
+        vscode.window.showWarningMessage('AgentDeck: No workspace folder open to launch agent in.');
+        break;
+      }
+      agentManager.launch(msg.agent as any, projectPath, msg.message);
+      break;
+    }
+
+    case 'open_terminal':
+      agentManager.showTerminal(msg.agentId);
+      // Also send focus message back to other clients
+      wsServer.broadcast({
+        type: 'focus',
+        agentId: msg.agentId,
+        view: 'terminal',
+      });
+      break;
+  }
+}
+
+// ── Status bar ────────────────────────────────────────────
+
+function updateStatusBar(agents: { status: string }[]): void {
+  const total = agents.length;
+  const waiting = agents.filter(a => a.status === 'waiting').length;
+  const working = agents.filter(a => a.status === 'working').length;
+  const errors = agents.filter(a => a.status === 'error').length;
+
+  if (total === 0) {
+    statusBarItem.text = '$(plug) AgentDeck';
+    statusBarItem.tooltip = 'No agents running. Click to launch one.';
+    return;
+  }
+
+  let parts = [`$(plug) ${total} agent${total > 1 ? 's' : ''}`];
+  if (waiting > 0) parts.push(`$(bell) ${waiting}`);
+  if (working > 0) parts.push(`$(sync~spin) ${working}`);
+  if (errors > 0) parts.push(`$(error) ${errors}`);
+
+  statusBarItem.text = parts.join('  ');
+  statusBarItem.tooltip = `AgentDeck: ${total} agents (${working} working, ${waiting} waiting, ${errors} errors)`;
+}
