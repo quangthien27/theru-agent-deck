@@ -16,7 +16,6 @@ const AGENTS = [
 
 // TODO: load from ~/.agentdeck/config.json via bridge
 const PROJECTS = [
-  { name: "theru-agent-desk", path: "~/Dev/_THR/theru-agent-desk" },
   { name: "jw-app", path: "~/Dev/jw-app" },
   { name: "afh", path: "~/Dev/afh" },
   { name: "snapopa", path: "~/Dev/snapopa" },

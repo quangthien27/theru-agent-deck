@@ -2,596 +2,525 @@
 
 ## Project Overview
 
-AgentDeck is a Logitech MX Creative Console plugin that provides a physical control surface for managing multiple AI coding agents (starting with Claude Code). It transforms the LCD keypad into a mission control dashboard showing agent status, and enables one-tap approvals, dial-based navigation, and haptic notifications.
+AgentDeck gives developers a physical control surface for managing multiple AI coding agents. Glance at your MX Creative Console to see which agents need attention, approve or reject with one tap, and launch new sessions — all without leaving your editor.
 
-**Key Differentiator:** Multi-session orchestration. Unlike single-agent tools (Conductor, etc.), AgentDeck manages 3+ simultaneous Claude Code sessions with visual status, priority routing, and unified control.
+It combines four components:
 
-## SDK Language Choice
+1. **Agent Deck** (Go binary) — Open-source session manager for AI coding agents (tmux-based)
+2. **Bridge Service** (compiled TypeScript binary) — Shared backend connecting all clients to Agent Deck
+3. **Logi Plugin** (C#) — MX Creative Console + MX Master 4 integration (status tiles, quick actions, haptics)
+4. **VS Code Extension** (TypeScript) — Terminal integration, diff viewer, sidebar agent list
 
-### Research Findings (March 2026)
-
-| Aspect | C# (.NET) | Node.js/TypeScript |
-|--------|-----------|-------------------|
-| **Platform** | ✅ Windows + macOS | ⚠️ Windows only |
-| **Features** | Full ("advanced features") | "Simple development" |
-| **Haptics** | ✅ Documented | ❓ Unclear |
-| **Maturity** | Established | New (v0.1.1) |
-
-**Decision:** Use **C# for cross-platform support** (required for macOS development). Node.js SDK is Windows-only with macOS "coming in the future."
-
-### Simplified Architecture
-
-Since we must use C# anyway, we can **eliminate the separate Bridge Service** and build everything in the plugin:
+## Architecture
 
 ```
-┌──────────────────────────────────────────────────────────────────┐
-│                        Developer Machine                          │
-│                                                                   │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐               │
-│  │ Terminal 1  │  │ Terminal 2  │  │ Terminal 3  │               │
-│  │ Claude Code │  │ Claude Code │  │ Claude Code │               │
-│  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘               │
-│         │                │                │                       │
-│         └────────────────┼────────────────┘                       │
-│                          │ (tmux/PTY monitoring)                  │
-│                          ▼                                        │
-│  ┌────────────────────────────────────────────────────────────┐  │
-│  │              AgentDeck Plugin (C# / .NET 8)                 │  │
-│  │                                                             │  │
-│  │  ┌──────────────┐  ┌──────────────┐  ┌──────────────────┐  │  │
-│  │  │   Terminal   │  │    State     │  │   Checkpoint     │  │  │
-│  │  │   Monitor    │  │   Manager    │  │   Manager (Git)  │  │  │
-│  │  │  tmux/PTY    │  │  Detection   │  │  Stash/Restore   │  │  │
-│  │  └──────────────┘  └──────────────┘  └──────────────────┘  │  │
-│  │  ┌──────────────┐  ┌──────────────┐  ┌──────────────────┐  │  │
-│  │  │    Agent     │  │    Cost      │  │   Orchestration  │  │  │
-│  │  │   Parsers    │  │   Tracker    │  │   & Priority     │  │  │
-│  │  │ Claude/Aider │  │  Token/$     │  │   Management     │  │  │
-│  │  └──────────────┘  └──────────────┘  └──────────────────┘  │  │
-│  │  ┌──────────────┐  ┌──────────────┐  ┌──────────────────┐  │  │
-│  │  │    LCD       │  │   Haptics    │  │   Actions        │  │  │
-│  │  │   Renderer   │  │   Manager    │  │   & Dial         │  │  │
-│  │  │  Rich Status │  │  Attention   │  │   Handlers       │  │  │
-│  │  └──────────────┘  └──────────────┘  └──────────────────┘  │  │
-│  └─────────────────────────────┬──────────────────────────────┘  │
-└────────────────────────────────┼──────────────────────────────────┘
-                                 ▼
-                     MX Creative Console + MX Master 4
+                MX Creative Console              VS Code / Cursor
+                + MX Master 4                    (IDE)
+                     │                                │
+                     │                                │
+          ┌──────────┴──────────┐          ┌──────────┴──────────┐
+          │  Logi Plugin (C#)   │          │  VS Code Extension  │
+          │                     │          │  (TypeScript)        │
+          │  • Dynamic Folder:  │          │                     │
+          │    agent status     │          │  • Sidebar: agent   │
+          │    tiles on LCD     │          │    list + status    │
+          │  • Quick actions:   │          │  • Integrated       │
+          │    approve/reject   │          │    terminal per     │
+          │  • Actions Ring:    │          │    agent session    │
+          │    8 shortcuts      │          │  • Diff viewer for  │
+          │  • Haptics on       │          │    approvals        │
+          │    MX Master 4      │          │  • Commands for     │
+          │                     │          │    Logi plugin to   │
+          │  Tap agent tile →   │          │    trigger          │
+          │  VS Code focuses    │          │                     │
+          │  that terminal      │          │                     │
+          └──────────┬──────────┘          └──────────┬──────────┘
+                     │ WebSocket :9999                │ WebSocket :9999
+                     │                                │
+                     └────────────┬───────────────────┘
+                                  │
+                     ┌────────────┴────────────┐
+                     │  Bridge (compiled bin)   │
+                     │                          │
+                     │  • SSE client → AD       │
+                     │  • WS client pool → AD   │
+                     │  • CLI executor → AD     │
+                     │  • State mapper          │
+                     │  • WS server :9999       │
+                     │    (multiple clients)    │
+                     └────────────┬─────────────┘
+                                  │
+                     ┌────────────┴────────────┐
+                     │  Agent Deck (Go binary)  │
+                     │  REST + SSE + WS :8420   │
+                     │                          │
+                     │  • tmux session mgmt     │
+                     │  • Status detection      │
+                     │  • Multi-agent support   │
+                     └──────────────────────────┘
 ```
 
-**Benefits of unified architecture:**
-- Single process to install/manage
-- No WebSocket complexity
-- Faster state updates (no IPC)
-- Simpler deployment (.lplug4 file only)
+### Role Split: Console vs Editor
+
+| Concern | MX Creative Console (Logi Plugin) | VS Code Extension |
+|---|---|---|
+| **What it's good at** | Glanceable status, quick actions without context-switching | Rich content, terminal access, full diffs |
+| Agent status | Color-coded 80x80 LCD tiles (green/yellow/red/gray) | Sidebar list with status icons |
+| Approve/reject | One tap on console | Click in sidebar or terminal |
+| View diff/terminal | Tap tile → triggers VS Code to show it | Full integrated terminal + diff viewer |
+| Launch agent | NEW button → pick agent type → pick project | Command palette or sidebar button |
+| Haptics | MX Master 4 vibrates on status change | N/A |
+| Works without screen | Yes — ambient awareness via hardware | No |
+
+The console is the **remote control**. VS Code is the **screen**.
+
+## Platform Support
+
+| Platform | Status | Notes |
+|---|---|---|
+| **macOS** | v1.0 | Full support. Requires tmux (guided install on first run). |
+| **Windows** | Future | Requires WSL2 + tmux. Plugin itself is cross-platform. |
+| **Linux** | Future | Needs Logi Options+ for Linux. |
+
+## Why Agent Deck as Backend
+
+Instead of building our own terminal monitoring, we use [Agent Deck](https://github.com/asheshgoplani/agent-deck):
+
+| Need | Agent Deck provides |
+|---|---|
+| Terminal monitoring | tmux integration with status detection |
+| Session management | Create, fork, kill, group sessions |
+| Multi-agent support | Claude Code, Gemini, OpenCode, Codex, Aider |
+| Status tracking | running / waiting / idle / error |
+| Git isolation | Worktree support per agent |
+| Real-time updates | REST API + SSE + WebSocket on `:8420` |
+
+## Agent Deck Status Mapping
+
+Agent Deck detects these statuses. Our UI maps them consistently:
+
+| Agent Deck Status | Symbol | Color | Console Tile | Meaning |
+|---|---|---|---|---|
+| `running` | `●` | Green | Green tile, "running" | Agent actively working |
+| `waiting` | `◐` | Yellow | Yellow tile (pulsing), "INPUT!" | Needs user input/approval |
+| `idle` | `○` | Gray | Gray tile, "ready" | Ready for commands |
+| `error` | `✕` | Red | Red tile (pulsing), "error" | Something went wrong |
+
+## Logi Plugin Architecture
+
+### SDK Concepts (corrected understanding)
+
+The Logi Actions SDK works differently from what we initially assumed:
+
+- **Users assign individual actions** to buttons/dials via Logi Options+ UI (like Photoshop actions)
+- **Actions Ring** = 8 action button slots with icon + label. **NOT a rich content overlay**. Cannot display diffs, scrollable text, or custom UI.
+- **Dynamic Folders** = the key feature. A `PluginDynamicFolder` takes over all 9 LCD buttons when opened. Full control of rendering, input, and navigation.
+- **Default Profiles** = shipped `.lp5` files that pre-assign our folder to a button on install.
+
+### Dynamic Folder Approach
+
+The user assigns one "AgentDeck" Dynamic Folder action to an LCD button. Tapping it opens the folder and takes over all 9 buttons:
+
+```
+Page 1: Agent Dashboard
+┌─────────┬─────────┬─────────┐
+│ JW  ●   │ AFH ◐   │ SNAP ✕  │  Agent tiles 1-6
+│ running │ INPUT!  │ error   │  Color-coded status
+├─────────┼─────────┼─────────┤  Tap = show in VS Code
+│ API ○   │  --     │  --     │  Long-press = open terminal
+│ ready   │ (empty) │ (empty) │
+├─────────┼─────────┼─────────┤
+│   +     │  4 ●    │  BACK   │  Controls
+│  NEW    │ STATUS  │         │
+└─────────┴─────────┴─────────┘
+Dial: scroll if >6 agents
+
+Tap agent with ◐ (waiting) →
+
+Page 2: Approval Actions
+┌─────────┬─────────┬─────────┐
+│ AFH ◐   │ auth.ts │ mid.ts  │  Agent + affected files
+│ waiting │ +2 -1   │ +2 -0   │  (file name + line count)
+├─────────┼─────────┼─────────┤
+│ test.ts │         │         │
+│ +7 -0   │         │         │
+├─────────┼─────────┼─────────┤
+│  YES ✓  │  NO ✗   │  BACK   │  Approve / Reject / Back
+└─────────┴─────────┴─────────┘
+Dial: page through files if >5
+
+Tap file tile → VS Code opens diff for that file
+Full diff → hold agent tile → opens terminal in VS Code
+```
+
+### Actions Ring (MX Master 4)
+
+8 quick-action shortcuts — no rich content, just buttons:
+
+1. Approve current agent
+2. Reject current agent
+3. Next waiting agent
+4. Pause agent
+5. Kill agent
+6. New agent
+7. Open terminal in VS Code
+8. Toggle sidebar
+
+### Haptics (MX Master 4)
+
+Vibration patterns on agent status transitions:
+
+| Event | Haptic Pattern |
+|---|---|
+| Agent needs input | `sharp_collision` (attention) |
+| Agent completed | `completed` |
+| Agent error | `angry_alert` |
+
+### Key SDK Classes Used
+
+| Class | Purpose |
+|---|---|
+| `PluginDynamicFolder` | Main dashboard — takes over 9 LCD buttons |
+| `BitmapBuilder` | Renders 80x80 pixel tiles (text + colors + icons) |
+| `PluginDynamicCommand` | Individual actions (for Actions Ring + standalone buttons) |
+| `PluginDynamicAdjustment` | Dial rotation handler |
+
+## VS Code Extension Architecture
+
+The extension connects to the same Bridge WebSocket (:9999) as the Logi plugin.
+
+### Features
+
+1. **Sidebar: Agent List** — TreeView showing all agents with live status icons
+2. **Integrated Terminal** — Opens VS Code terminal connected to agent's tmux session via Agent Deck WebSocket (`/ws/session/<id>`)
+3. **Diff Viewer** — When agent is waiting, shows pending changes in VS Code's native diff editor
+4. **Commands** — Approve, reject, pause, kill, new agent (command palette + sidebar buttons)
+5. **Logi Plugin Integration** — When Logi plugin sends `open_terminal` or `show_diff`, VS Code extension receives it via bridge and focuses the right panel
+
+### Extension ↔ Bridge Protocol
+
+Same WebSocket protocol as Logi plugin on `:9999`. The bridge broadcasts state to all connected clients (Logi plugin + VS Code extension + simulator).
+
+Additional VS Code-specific messages:
+
+```typescript
+// Bridge → VS Code: focus request from Logi plugin tap
+interface FocusAgent {
+  type: 'focus';
+  agentId: string;
+  view: 'terminal' | 'diff' | 'sidebar';
+}
+```
+
+### Terminal Integration
+
+The VS Code extension creates terminal instances that connect to Agent Deck's WebSocket terminal bridge:
+
+```
+VS Code Terminal → Extension → WS /ws/session/<id> → Agent Deck → tmux session
+```
+
+This lets users see full agent output, interact with approval prompts, and view real-time progress — all within VS Code.
+
+## Agent Deck API
+
+### REST
+
+| Method | Endpoint | Purpose |
+|---|---|---|
+| `GET` | `/healthz` | Health check |
+| `GET` | `/api/menu` | All sessions + groups |
+| `GET` | `/api/session/<id>` | Single session details |
+
+### SSE
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /events/menu` | Stream session state changes (pushes on change, keepalive every 15s) |
+
+### WebSocket
+
+| Endpoint | Purpose |
+|---|---|
+| `WS /ws/session/<id>` | Bidirectional terminal I/O |
+
+Client → Server: `{ "type": "input", "data": "y\n" }`, `{ "type": "resize", "cols": 120, "rows": 30 }`
+Server → Client: Binary frames (terminal output), JSON status messages
+
+### CLI (used by Bridge)
+
+```bash
+agent-deck launch <path> -c claude [-m "message"]  # Create + start session
+agent-deck session kill <id>                        # Kill session
+agent-deck session start <id>                       # Start existing session
+agent-deck session fork <id>                        # Fork session
+agent-deck attach <id>                              # Open terminal
+```
+
+### Data Structures
+
+```typescript
+interface MenuSnapshot {
+  profile: string;
+  generatedAt: string;
+  totalGroups: number;
+  totalSessions: number;
+  items: MenuItem[];
+}
+
+interface MenuItem {
+  index: number;
+  type: 'group' | 'session';
+  level: number;
+  path: string;
+  group?: MenuGroup;
+  session?: MenuSession;
+  isLastInGroup: boolean;
+  isSubSession: boolean;
+}
+
+interface MenuSession {
+  id: string;
+  title: string;
+  tool: string;       // 'claude', 'gemini', 'opencode', 'codex', 'shell'
+  status: string;      // 'idle' | 'running' | 'waiting' | 'error'
+  groupPath: string;
+  projectPath: string;
+  parentSessionId: string;
+  order: number;
+  tmuxSession: string;
+  createdAt: string;
+  lastAccessedAt: string;
+}
+```
+
+## WebSocket Protocol (Bridge ↔ Clients)
+
+All clients (Logi plugin, VS Code extension, simulator) use the same protocol on `:9999`.
+
+### Bridge → Client
+
+```typescript
+interface StateUpdate {
+  type: 'state';
+  agents: AgentSession[];
+}
+
+interface AgentSession {
+  id: string;
+  slot: number;
+  name: string;
+  agent: string;
+  status: 'idle' | 'working' | 'waiting' | 'error' | 'offline';
+  projectPath: string;
+  createdAt: string;
+}
+
+interface AgentEvent {
+  type: 'event';
+  agentId: string;
+  event: 'needs_approval' | 'completed' | 'error';
+}
+
+interface FocusAgent {
+  type: 'focus';
+  agentId: string;
+  view: 'terminal' | 'diff' | 'sidebar';
+}
+```
+
+### Client → Bridge
+
+```typescript
+interface AgentCommand {
+  type: 'command';
+  agentId: string;
+  action: 'approve' | 'reject' | 'pause' | 'resume' | 'kill';
+}
+
+interface LaunchAgent {
+  type: 'launch';
+  projectPath: string;
+  agent: string;
+  message?: string;
+}
+
+interface OpenTerminal {
+  type: 'open_terminal';
+  agentId: string;
+}
+```
 
 ## Directory Structure
 
 ```
 agentdeck/
-├── CLAUDE.md                    # This file
-├── README.md                    # Project documentation  
-├── LICENSE                      # MIT License
-│
-├── src/                         # Plugin source (C# / .NET 8)
-│   ├── AgentDeck.sln
-│   ├── AgentDeck/
-│   │   ├── AgentDeck.csproj
-│   │   ├── Plugin.cs            # Main plugin entry
-│   │   │
-│   │   ├── Terminal/            # Terminal monitoring
-│   │   │   ├── ITerminalAdapter.cs      # Adapter interface
-│   │   │   ├── TmuxAdapter.cs           # tmux session monitoring
-│   │   │   ├── PTYAdapter.cs            # Direct PTY (Windows)
-│   │   │   └── TerminalManager.cs       # Manages multiple adapters
-│   │   │
-│   │   ├── Agents/              # Agent parsing & state
-│   │   │   ├── IAgentParser.cs          # Parser interface
-│   │   │   ├── ClaudeCodeParser.cs      # Claude Code patterns
-│   │   │   ├── AiderParser.cs           # Aider patterns (future)
-│   │   │   ├── AgentState.cs            # State machine
-│   │   │   └── AgentSession.cs          # Session data model
-│   │   │
-│   │   ├── Orchestration/       # Multi-agent management
-│   │   │   ├── SessionOrchestrator.cs   # Priority & routing
-│   │   │   ├── CheckpointManager.cs     # Git stash/restore
-│   │   │   └── CostTracker.cs           # Token & cost tracking
-│   │   │
-│   │   ├── Actions/             # Logi Actions SDK commands
-│   │   │   ├── AgentSlotAction.cs       # Agent 1/2/3 buttons
-│   │   │   ├── ApproveAction.cs         # Yes button
-│   │   │   ├── RejectAction.cs          # No button
-│   │   │   ├── PauseAction.cs           # Pause button
-│   │   │   ├── UndoAction.cs            # Undo button
-│   │   │   ├── DiffAction.cs            # Diff button
-│   │   │   └── NewTaskAction.cs         # New task button
-│   │   │
-│   │   ├── Adjustments/         # Dial controls
-│   │   │   └── NavigateAdjustment.cs    # Context-aware dial
-│   │   │
-│   │   ├── Display/             # LCD rendering
-│   │   │   ├── LCDRenderer.cs           # Button rendering
-│   │   │   ├── ButtonState.cs           # Visual state model
-│   │   │   └── Icons.cs                 # Embedded icons
-│   │   │
-│   │   ├── Haptics/             # Haptic feedback
-│   │   │   ├── HapticsManager.cs        # Pattern management
-│   │   │   └── HapticPatterns.cs        # Predefined patterns
-│   │   │
-│   │   └── Config/              # Configuration
-│   │       ├── Settings.cs              # User settings
-│   │       └── Constants.cs             # App constants
+├── CLAUDE.md
+├── README.md
+├── packages/
+│   ├── bridge/                   # Bridge Service (TypeScript → compiled binary)
+│   │   ├── package.json
+│   │   ├── tsconfig.json
+│   │   ├── src/
+│   │   │   ├── index.ts
+│   │   │   ├── agent-deck-client.ts
+│   │   │   ├── state-mapper.ts
+│   │   │   ├── command-handler.ts
+│   │   │   ├── approval-parser.ts
+│   │   │   ├── ws-server.ts
+│   │   │   ├── protocol.ts
+│   │   │   └── config.ts
+│   │   └── tests/
 │   │
-│   └── AgentDeck.Tests/         # Unit tests
-│       ├── ParserTests.cs
-│       ├── StateTests.cs
-│       └── MockTerminal.cs
+│   ├── logi-plugin/              # Logi Actions Plugin (C#)
+│   │   ├── AgentDeckPlugin.sln
+│   │   └── src/
+│   │       ├── AgentDeckPlugin.cs
+│   │       ├── AgentDeckPlugin.csproj
+│   │       ├── Folders/
+│   │       │   └── AgentDashboardFolder.cs    # Dynamic Folder (main UI)
+│   │       ├── Commands/
+│   │       │   ├── ApproveCommand.cs          # For Actions Ring
+│   │       │   ├── RejectCommand.cs
+│   │       │   ├── NextWaitingCommand.cs
+│   │       │   ├── NewAgentCommand.cs
+│   │       │   └── OpenTerminalCommand.cs
+│   │       ├── Adjustments/
+│   │       │   └── AgentScrollAdjustment.cs
+│   │       ├── Services/
+│   │       │   ├── BridgeClient.cs
+│   │       │   ├── BridgeLauncher.cs
+│   │       │   └── DependencyChecker.cs
+│   │       ├── Models/
+│   │       │   ├── AgentSession.cs
+│   │       │   └── PluginState.cs
+│   │       ├── Helpers/
+│   │       │   ├── PluginLog.cs
+│   │       │   └── PluginResources.cs
+│   │       └── package/
+│   │           └── metadata/
+│   │               └── LoupedeckPackage.yaml
+│   │
+│   ├── vscode-extension/         # VS Code Extension (TypeScript)
+│   │   ├── package.json          # Extension manifest + contributes
+│   │   ├── tsconfig.json
+│   │   └── src/
+│   │       ├── extension.ts          # Activation, bridge client
+│   │       ├── bridge-client.ts      # WebSocket client to bridge :9999
+│   │       ├── sidebar-provider.ts   # TreeDataProvider for agent list
+│   │       ├── terminal-manager.ts   # Creates VS Code terminals → agent tmux
+│   │       ├── diff-viewer.ts        # Opens native diff editor for approvals
+│   │       └── commands.ts           # Approve, reject, new agent, etc.
+│   │
+│   └── simulator/                # Web Simulator (dev/testing)
+│       ├── package.json
+│       ├── serve.ts
+│       ├── index.html
+│       ├── style.css
+│       └── simulator.js
 │
-├── assets/                      # Shared assets
-│   ├── icons/                   # PNG icons for LCD (80x80)
-│   │   ├── agent-idle.png
-│   │   ├── agent-working.png
-│   │   ├── agent-waiting.png
-│   │   ├── agent-error.png
-│   │   ├── approve.png
-│   │   ├── reject.png
-│   │   └── ...
-│   ├── mockups/                 # Design mockups
-│   └── logo/                    # AgentDeck branding
+├── scripts/
+│   ├── build-all.sh
+│   ├── build-bridge.sh
+│   └── build-plugin.sh
 │
-└── docs/                        # Documentation
-    ├── setup.md                 # Installation guide
-    ├── development.md           # Development guide
-    └── patterns.md              # Claude Code pattern reference
+└── .github/
+    └── workflows/
+        └── build.yml
 ```
 
-## Key Data Models
+## Console ↔ VS Code Integration Flow
 
-### AgentSession
-
-```csharp
-public class AgentSession
-{
-    public string Id { get; set; }                    // Unique session ID
-    public int Slot { get; set; }                     // Keypad slot (0, 1, 2)
-    public string TerminalId { get; set; }            // Terminal/tmux pane ID
-    public AgentStatus Status { get; set; }           // Current status
-    public string TaskLabel { get; set; }             // Max 8 chars for LCD
-    public string TaskFull { get; set; }              // Full description
-    public List<string> FilesModified { get; set; }   // Modified files
-    public int TokensUsed { get; set; }               // Token count
-    public decimal CostEstimate { get; set; }         // Estimated $ cost
-    public DateTime LastActivity { get; set; }        // Last update
-    public TimeSpan WaitingDuration => Status == AgentStatus.Waiting 
-        ? DateTime.Now - LastActivity : TimeSpan.Zero;
-    public ApprovalRequest? PendingApproval { get; set; }
-}
-
-public enum AgentStatus
-{
-    Offline,    // Not connected
-    Idle,       // Ready for input (green)
-    Working,    // Processing (yellow)
-    Waiting,    // Needs approval (red)
-    Error       // Error state (red flash)
-}
-
-public class ApprovalRequest
-{
-    public ApprovalType Type { get; set; }
-    public string Summary { get; set; }
-    public string[] Options { get; set; }
-}
-
-public enum ApprovalType
-{
-    FileEdit,
-    Command,
-    Question
-}
 ```
-
-### LCD Button State
-
-```csharp
-public class ButtonState
-{
-    public int Slot { get; set; }
-    
-    // Visual
-    public Color BackgroundColor { get; set; }
-    public string StatusIcon { get; set; }           // Icon asset name
-    public string TaskLabel { get; set; }            // Max 8 chars
-    
-    // Rich indicators (unique to AgentDeck)
-    public int? ProgressPercent { get; set; }        // 0-100 progress ring
-    public CostLevel? CostIndicator { get; set; }    // Token usage level
-    public int? FileCount { get; set; }              // Files modified badge
-    public int? WaitingSeconds { get; set; }         // Shows urgency
-    
-    // Animation
-    public bool Pulse { get; set; }                  // Pulsing for attention
-    public bool Flash { get; set; }                  // Flash on state change
-}
-
-public enum CostLevel { Low, Medium, High }
-```
-
-## Claude Code Output Patterns
-
-### Detection Patterns (Regex)
-
-```csharp
-public static class ClaudeCodePatterns
-{
-    // Thinking/Working states
-    public static readonly Regex[] Thinking = new[]
-    {
-        new Regex(@"[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]"),           // Spinner characters
-        new Regex(@"Thinking\.\.\.", RegexOptions.IgnoreCase),
-        new Regex(@"Analyzing\.\.\.", RegexOptions.IgnoreCase),
-        new Regex(@"Reading\s+\d+\s+files", RegexOptions.IgnoreCase),
-    };
-    
-    // Approval needed
-    public static readonly Regex[] Approval = new[]
-    {
-        new Regex(@"Do you want to (?:apply|run|proceed)", RegexOptions.IgnoreCase),
-        new Regex(@"\[Y/n\]"),
-        new Regex(@"\[y/N\]"),
-        new Regex(@"Allow (?:edit|command|execution)", RegexOptions.IgnoreCase),
-        new Regex(@"Approve\?", RegexOptions.IgnoreCase),
-    };
-    
-    // Completion
-    public static readonly Regex[] Completed = new[]
-    {
-        new Regex(@"✓ (?:Done|Complete|Applied|Finished)", RegexOptions.IgnoreCase),
-        new Regex(@"Changes applied", RegexOptions.IgnoreCase),
-        new Regex(@"Task complete", RegexOptions.IgnoreCase),
-    };
-    
-    // Error
-    public static readonly Regex[] Error = new[]
-    {
-        new Regex(@"✗ Error", RegexOptions.IgnoreCase),
-        new Regex(@"^Error:", RegexOptions.IgnoreCase | RegexOptions.Multiline),
-        new Regex(@"^Failed:", RegexOptions.IgnoreCase | RegexOptions.Multiline),
-        new Regex(@"Aborted", RegexOptions.IgnoreCase),
-    };
-    
-    // Idle (prompt visible)
-    public static readonly Regex[] Idle = new[]
-    {
-        new Regex(@"^>\s*$", RegexOptions.Multiline),
-        new Regex(@"^claude>\s*$", RegexOptions.Multiline),
-        new Regex(@"\n>\s*$"),
-    };
-    
-    // Cost tracking (unique feature)
-    public static readonly Regex TokenCount = new Regex(@"Tokens?:\s*([\d,]+)", RegexOptions.IgnoreCase);
-    public static readonly Regex CostDisplay = new Regex(@"Cost:\s*\$([\d.]+)", RegexOptions.IgnoreCase);
-    public static readonly Regex ContextSize = new Regex(@"Context:\s*([\d.]+)k", RegexOptions.IgnoreCase);
-}
-```
-
-## Multi-Agent Orchestration (Competitive Advantage)
-
-### Priority System
-
-```csharp
-public class SessionOrchestrator
-{
-    public AgentSession? GetHighestPriority(IEnumerable<AgentSession> agents)
-    {
-        // Priority order: Waiting > Error > Working (longest) > Idle
-        return agents
-            .Where(a => a.Status != AgentStatus.Offline)
-            .OrderBy(a => a.Status switch
-            {
-                AgentStatus.Waiting => 0,
-                AgentStatus.Error => 1,
-                AgentStatus.Working => 2,
-                AgentStatus.Idle => 3,
-                _ => 4
-            })
-            .ThenByDescending(a => a.WaitingDuration)  // Longest waiting first
-            .FirstOrDefault();
-    }
-    
-    public FocusSuggestion? SuggestNextFocus(IEnumerable<AgentSession> agents)
-    {
-        var waiting = agents.Where(a => a.Status == AgentStatus.Waiting).ToList();
-        if (waiting.Count > 0)
-        {
-            return new FocusSuggestion
-            {
-                AgentId = waiting.OrderByDescending(a => a.WaitingDuration).First().Id,
-                Reason = FocusReason.ApprovalNeeded,
-                Urgency = waiting.Count > 1 ? Urgency.High : Urgency.Medium
-            };
-        }
-        
-        var errored = agents.FirstOrDefault(a => a.Status == AgentStatus.Error);
-        if (errored != null)
-        {
-            return new FocusSuggestion
-            {
-                AgentId = errored.Id,
-                Reason = FocusReason.Error,
-                Urgency = Urgency.High
-            };
-        }
-        
-        return null;  // No urgent focus needed
-    }
-}
-```
-
-### Haptic Patterns (Attention Routing)
-
-```csharp
-public static class HapticPatterns
-{
-    // Single agent needs approval
-    public static readonly HapticPattern SingleApproval = 
-        new("short-short-short", duration: 300);
-    
-    // Multiple agents waiting (more urgent)
-    public static readonly HapticPattern MultipleApproval = 
-        new("long-short-long", duration: 500);
-    
-    // Task completed
-    public static readonly HapticPattern TaskComplete = 
-        new("long", duration: 200);
-    
-    // Error occurred
-    public static readonly HapticPattern Error = 
-        new("rapid", duration: 400);
-    
-    // Cost threshold hit
-    public static readonly HapticPattern CostWarning = 
-        new("short-long", duration: 350);
-}
-```
-
-### Git Checkpoints (Match Conductor, Multi-Agent)
-
-```csharp
-public class CheckpointManager
-{
-    public async Task<Checkpoint> CreateCheckpoint(AgentSession agent, string workingDir)
-    {
-        var stashRef = await ExecuteGit(workingDir, "stash create");
-        
-        return new Checkpoint
-        {
-            Id = Guid.NewGuid().ToString("N")[..8],
-            AgentId = agent.Id,
-            Timestamp = DateTime.UtcNow,
-            GitRef = stashRef,
-            FilesModified = agent.FilesModified.ToList(),
-            TaskDescription = agent.TaskFull,
-            TokenCount = agent.TokensUsed
-        };
-    }
-    
-    public async Task<bool> RestoreCheckpoint(Checkpoint checkpoint, string workingDir)
-    {
-        if (string.IsNullOrEmpty(checkpoint.GitRef)) return false;
-        
-        await ExecuteGit(workingDir, $"stash apply {checkpoint.GitRef}");
-        return true;
-    }
-    
-    // Unified timeline across all agents (unique to AgentDeck)
-    public IEnumerable<Checkpoint> GetTimeline(int limit = 20)
-    {
-        return _checkpoints
-            .OrderByDescending(c => c.Timestamp)
-            .Take(limit);
-    }
-}
-```
-
-## Agent Adapter System (Extensibility)
-
-```csharp
-public interface IAgentParser
-{
-    string AgentName { get; }                         // "Claude Code", "Aider"
-    AgentStatus? ParseOutput(string line);            // Detect status from output
-    string ApproveCommand { get; }                    // What to send for "yes"
-    string RejectCommand { get; }                     // What to send for "no"
-    string InterruptCommand { get; }                  // Ctrl+C equivalent
-}
-
-public class ClaudeCodeParser : IAgentParser
-{
-    public string AgentName => "Claude Code";
-    public string ApproveCommand => "y\n";
-    public string RejectCommand => "n\n";
-    public string InterruptCommand => "\x03";         // Ctrl+C
-    
-    public AgentStatus? ParseOutput(string line)
-    {
-        if (ClaudeCodePatterns.Approval.Any(p => p.IsMatch(line)))
-            return AgentStatus.Waiting;
-        if (ClaudeCodePatterns.Thinking.Any(p => p.IsMatch(line)))
-            return AgentStatus.Working;
-        if (ClaudeCodePatterns.Completed.Any(p => p.IsMatch(line)))
-            return AgentStatus.Idle;
-        if (ClaudeCodePatterns.Error.Any(p => p.IsMatch(line)))
-            return AgentStatus.Error;
-        if (ClaudeCodePatterns.Idle.Any(p => p.IsMatch(line)))
-            return AgentStatus.Idle;
-        return null;  // No status change detected
-    }
-}
-
-// Ready for future expansion
-public class AiderParser : IAgentParser { /* ... */ }
-public class CodexParser : IAgentParser { /* ... */ }
-```
-
-## Terminal Adapters
-
-```csharp
-public interface ITerminalAdapter
-{
-    string AdapterType { get; }                       // "tmux", "pty", "iterm"
-    Task<bool> Connect(string identifier);
-    Task Disconnect();
-    event Action<string> OnOutput;                    // Terminal output stream
-    Task SendInput(string text);
-    bool IsConnected { get; }
-}
-
-// Primary adapter: tmux (works on macOS and Linux, WSL on Windows)
-public class TmuxAdapter : ITerminalAdapter
-{
-    public string AdapterType => "tmux";
-    
-    public async Task<bool> Connect(string paneId)
-    {
-        // Monitor tmux pane output via `tmux capture-pane` polling
-        // or `tmux pipe-pane` for streaming
-    }
-    
-    public async Task SendInput(string text)
-    {
-        // Send keystrokes via `tmux send-keys`
-        await ExecuteCommand($"tmux send-keys -t {_paneId} '{text}'");
-    }
-}
-
-// Windows-native adapter (for non-WSL scenarios)
-public class PTYAdapter : ITerminalAdapter
-{
-    public string AdapterType => "pty";
-    // Use ConPTY on Windows for direct terminal access
-}
+User sees yellow pulsing tile on console (agent waiting)
+    │
+    ├── Tap tile on console
+    │   └── Bridge sends FocusAgent { view: 'terminal' } to VS Code
+    │       └── VS Code extension focuses that agent's terminal
+    │
+    ├── Long-press tile
+    │   └── Bridge sends FocusAgent { view: 'diff' } to VS Code
+    │       └── VS Code shows approval diff
+    │
+    ├── Press YES on dialpad (or Actions Ring approve)
+    │   └── Bridge sends approve to Agent Deck
+    │       └── Agent continues, tile turns green
+    │
+    └── MX Master 4 haptic buzz alerts user
+        └── User glances at console, sees which agent needs them
 ```
 
 ## Development Commands
 
-### Plugin Development
+### Bridge
 
 ```bash
-# Prerequisites
-# - .NET 8.0 SDK
-# - Logi Options+ installed
-# - MX Creative Console connected
-
-# Clone and build
-git clone https://github.com/pinkpixel-dev/agentdeck.git
-cd agentdeck/src
-
-# Restore dependencies
-dotnet restore
-
-# Build
-dotnet build
-
-# The build creates a .link file that Logi Options+ detects
-# Restart Logi Options+ to load the plugin
-
-# Run tests
-dotnet test
-
-# Package for distribution
-# (Use LogiPluginTool from Logitech Developer site)
-logiplugintool package AgentDeck
-# Creates AgentDeck.lplug4
+cd packages/bridge
+bun install
+bun run dev          # Hot reload, connects to Agent Deck :8420
+bun run test         # Run tests
+bun run compile      # Compile to standalone binary
 ```
 
-### Testing Without Hardware
+### Logi Plugin
 
 ```bash
-# Run unit tests with mock terminal
-dotnet test --filter "Category=UnitTest"
-
-# Run integration tests (requires Logi Options+ but no hardware)
-dotnet test --filter "Category=Integration"
-
-# Use the mock terminal to replay Claude Code output
-dotnet run --project AgentDeck.Tests -- --replay samples/session-approval.txt
+cd packages/logi-plugin
+dotnet build         # Build plugin DLL
+dotnet test          # Run tests
+# logiplugintool pack → produces .lplug4
 ```
 
-## Environment Setup
-
-### Prerequisites
-
-- .NET 8.0 SDK
-- Logi Options+ (latest version)
-- MX Creative Console (for hardware testing)
-- tmux (for terminal monitoring on macOS/Linux)
-- Git (for checkpoint feature)
-
-### First-Time Setup
-
-1. Install Logi Options+ from Logitech
-2. Connect MX Creative Console
-3. Clone this repository
-4. Run `dotnet build` in the `src/` directory
-5. Restart Logi Options+ to detect the plugin
-6. Configure tmux sessions for Claude Code monitoring
-
-### tmux Configuration for AgentDeck
+### VS Code Extension
 
 ```bash
-# Create a named tmux session for Claude Code agents
-tmux new-session -s agentdeck -n agent1
-
-# Create additional panes/windows
-tmux new-window -t agentdeck -n agent2
-tmux new-window -t agentdeck -n agent3
-
-# AgentDeck monitors these pane IDs:
-# agentdeck:agent1, agentdeck:agent2, agentdeck:agent3
+cd packages/vscode-extension
+npm install
+npm run compile      # Build extension
+# F5 in VS Code → launches Extension Development Host
 ```
 
-## Build Phase Deliverables (Due April 1st)
+### Simulator
 
-- [ ] Working plugin that monitors Claude Code via tmux
-- [ ] LCD button updates showing agent status
-- [ ] At least 3 agent slots functional
-- [ ] Approve/Reject buttons working
-- [ ] Basic haptic notifications
-- [ ] Git checkpoint creation (before approvals)
+```bash
+cd packages/simulator
+bun dev              # http://localhost:8888
+```
+
+## Build Phase Deliverables
+
+### Required
+- [x] Bridge Service (SSE + WS + CLI client for Agent Deck)
+- [x] Bridge WebSocket server (:9999) with multi-client support
+- [x] Bridge tests (unit + integration)
+- [ ] Logi Plugin: Dynamic Folder with agent status tiles
+- [ ] Logi Plugin: Approve/reject flow via folder buttons
+- [ ] Logi Plugin: NEW agent flow (agent type → project picker)
+- [ ] Logi Plugin: Actions Ring commands (8 quick actions)
+- [ ] Logi Plugin: Haptic notifications on MX Master 4
+- [ ] Logi Plugin: Default profile (pre-assigns folder to button)
+- [ ] VS Code Extension: Sidebar agent list with live status
+- [ ] VS Code Extension: Integrated terminal per agent session
+- [ ] VS Code Extension: Diff viewer for approvals
+- [ ] VS Code Extension: Commands (approve, reject, new, kill)
+- [ ] VS Code Extension: Responds to FocusAgent from Logi plugin
+- [x] Simulator: Web-based console + bridge testing
+
+### Nice to Have
+- [ ] Cost tracking display
+- [ ] Git worktree display
+- [ ] Session forking
+- [ ] Windows support (WSL2)
+
+### Deliverables
 - [ ] 3-minute demo video
 - [ ] Public GitHub repository
-
-## Competitive Advantages Summary
-
-| Feature | AgentDeck | Conductor | Claw Control |
-|---------|-----------|-----------|--------------|
-| Multi-session (3+) | ✅ | ❌ (single) | ⚠️ (types, not sessions) |
-| CLI/Terminal focus | ✅ | ❌ (VS Code) | ❌ (abstract) |
-| Git checkpoints | ✅ | ✅ | ❌ |
-| Cost tracking | ✅ | ❌ | ❌ |
-| Priority routing | ✅ | ❌ | ❌ |
-| Rich LCD display | ✅ | ⚠️ (basic) | ⚠️ (basic) |
-| Extensible parsers | ✅ | ❌ | ⚠️ |
+- [ ] Release: .lplug4 + .vsix + bridge binary
 
 ## Resources
 
+- [Agent Deck (Backend)](https://github.com/asheshgoplani/agent-deck)
 - [Logi Actions SDK Documentation](https://logitech.github.io/actions-sdk-docs/)
-- [Actions SDK C# Getting Started](https://logitech.github.io/actions-sdk-docs/csharp/plugin-development/introduction/)
-- [Haptics Guide](https://logitech.github.io/actions-sdk-docs/csharp/haptics/haptics-overview/)
-- [Logi Developer Discord](https://discord.gg/ptV2BfHCmm)
-- [Claude Code Documentation](https://docs.anthropic.com/en/docs/claude-code)
-
-## Notes for Development
-
-1. **State Machine**: Be conservative with state transitions. False positives (thinking agent is waiting when it's not) are worse than slight delays.
-
-2. **LCD Updates**: Don't spam updates. Batch changes and update at most every 100ms.
-
-3. **tmux Monitoring**: Use `tmux capture-pane -p` for polling, or `tmux pipe-pane` for streaming. Polling at 200ms intervals is sufficient.
-
-4. **Haptics**: Use sparingly. Only for state changes that need attention, not continuous feedback.
-
-5. **Git Checkpoints**: Create checkpoints automatically before every approval, not after. This lets users undo if they approve by mistake.
-
-6. **Testing**: Create mock terminal sessions that replay Claude Code output. Store sample outputs in `tests/samples/`.
+- [Actions SDK C# Plugin Development](https://logitech.github.io/actions-sdk-docs/csharp/plugin-development/introduction/)
+- [Actions SDK Plugin Features](https://logitech.github.io/actions-sdk-docs/csharp/plugin-features/)
+- [VS Code Extension API](https://code.visualstudio.com/api)
