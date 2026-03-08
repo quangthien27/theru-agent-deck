@@ -194,6 +194,92 @@ body {
   color: #a0a0a0;
 }
 
+/* Approve/Reject button styles (bottom row in approve mode) */
+.approve-btn {
+  background: #1e4028 !important;
+  border-color: #2d7840 !important;
+}
+
+.approve-btn:hover {
+  background: #255030 !important;
+}
+
+.approve-icon {
+  color: #5cb870 !important;
+}
+
+.reject-btn {
+  background: #402020 !important;
+  border-color: #784040 !important;
+}
+
+.reject-btn:hover {
+  background: #502828 !important;
+}
+
+.reject-icon {
+  color: #c86060 !important;
+}
+
+/* Context buttons (approval page info tiles) */
+.context-btn {
+  background: #1e1e28 !important;
+  animation: none !important;
+  padding: 8px !important;
+}
+
+.context-btn .context-label {
+  font-size: 12px;
+  color: #999;
+  text-align: center;
+}
+
+/* Identity tile (agent + project) */
+.context-identity {
+  background: #202038 !important;
+  border-color: #3a3a5a !important;
+}
+
+.ctx-agent {
+  font-size: 16px;
+  font-weight: 700;
+  color: #e0e0ff;
+  letter-spacing: 0.3px;
+}
+
+.ctx-project {
+  font-size: 10px;
+  color: #8888aa;
+  margin-top: 4px;
+}
+
+/* Info tiles (session, status) */
+.ctx-value {
+  font-size: 18px;
+  font-weight: 600;
+  color: #c8dcff;
+}
+
+.ctx-label {
+  font-size: 9px;
+  color: #666;
+  margin-top: 4px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+
+.ctx-detail {
+  font-size: 9px;
+  color: #888;
+  margin-top: 4px;
+  text-align: center;
+  line-height: 1.3;
+}
+
+.ctx-waiting {
+  color: #d4b030;
+}
+
 /* Dialpad */
 .dialpad {
   flex: 1;
