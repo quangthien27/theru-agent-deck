@@ -18,6 +18,9 @@ export function openSimulatorWebview(context: vscode.ExtensionContext): void {
     {
       enableScripts: true,
       retainContextWhenHidden: true,
+      localResourceRoots: [
+        vscode.Uri.file(path.resolve(context.extensionPath, '..', 'simulator')),
+      ],
     }
   );
 
@@ -49,6 +52,16 @@ function getWebviewContent(context: vscode.ExtensionContext): string {
       <p>Expected at: ${simulatorDir}</p>
       <p>Make sure packages/simulator exists alongside the extension.</p>
     </body></html>`;
+  }
+
+  // Convert icon paths to webview URIs so images load inside the webview
+  const iconsDir = path.join(simulatorDir, 'icons');
+  if (fs.existsSync(iconsDir)) {
+    const iconFiles = fs.readdirSync(iconsDir);
+    for (const file of iconFiles) {
+      const webviewUri = panel!.webview.asWebviewUri(vscode.Uri.file(path.join(iconsDir, file)));
+      js = js.replace(new RegExp(`icons/${file.replace('.', '\\.')}`, 'g'), webviewUri.toString());
+    }
   }
 
   return `<!DOCTYPE html>
@@ -86,7 +99,7 @@ function getWebviewContent(context: vscode.ExtensionContext): string {
 
       <div class="dialpad">
         <div class="dialpad-grid">
-          <button class="dial-btn" id="btn-undo">KILL</button>
+          <button class="dial-btn" id="btn-undo">END</button>
           <button class="dial-btn" id="btn-pause">PAUSE</button>
           <div class="dial-area">
             <div class="dial" id="dial">

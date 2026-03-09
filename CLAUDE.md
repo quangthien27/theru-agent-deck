@@ -100,6 +100,19 @@ The extension parses terminal output to detect status. Patterns per agent type:
 | Aider | `/run`, `y/n` prompts | `aider>` prompt | Error messages |
 | Generic | `[y/N]`, `[Y/n]`, `approve` | Shell prompt | `error`, `Error`, `ERROR` |
 
+### AI Status Classifier (Optional)
+
+When heuristic pattern matching is uncertain (falls through to `currentStatus`), an optional local Ollama model provides a second opinion. Disabled by default — zero cloud dependency, no API costs.
+
+**Flow**: `detectStatus()` returns `{ status, confident }`. When `confident: false` and Ollama is enabled, `ai-classifier.ts` fires an async classification (non-blocking). If the AI disagrees, it updates the status.
+
+**Settings** (VS Code):
+- `agentdeck.ai.enabled` — `false` by default
+- `agentdeck.ai.ollamaUrl` — defaults to `http://localhost:11434`
+- `agentdeck.ai.model` — defaults to `qwen2.5:0.5b` (0.5B params, ~1GB RAM, fastest)
+
+**Safeguards**: 2s timeout, 3s per-agent debounce, silent fallback on any error. Uses Node `http` module directly (no npm dependency).
+
 ## VS Code Extension Architecture
 
 The extension is the central hub — it manages agents, serves the Logi Plugin, and provides all UI.
@@ -110,7 +123,8 @@ The extension is the central hub — it manages agents, serves the Logi Plugin, 
 |---|---|
 | `extension.ts` | Activation, lifecycle, wires everything together |
 | `agent-manager.ts` | Spawn/kill agent processes via VS Code terminals |
-| `status-parser.ts` | Parse terminal output to detect agent status |
+| `status-parser.ts` | Parse terminal output to detect agent status (returns `DetectionResult` with confidence) |
+| `ai-classifier.ts` | Optional Ollama-based AI fallback for uncertain status detection |
 | `ws-server.ts` | WebSocket server on `:9999` for Logi Plugin + simulator |
 | `sidebar-provider.ts` | TreeDataProvider for agent list in sidebar |
 | `terminal-manager.ts` | Creates and tracks VS Code terminal instances |
@@ -348,6 +362,7 @@ agentdeck/
 │   │       ├── extension.ts          # Activation, lifecycle
 │   │       ├── agent-manager.ts      # Spawn/kill agents in VS Code terminals
 │   │       ├── status-parser.ts      # Parse terminal output for status
+│   │       ├── ai-classifier.ts      # Optional Ollama AI status classifier
 │   │       ├── ws-server.ts          # WebSocket server :9999
 │   │       ├── sidebar-provider.ts   # TreeDataProvider for agent list
 │   │       ├── terminal-manager.ts   # VS Code terminal instances
@@ -446,6 +461,26 @@ bun dev              # http://localhost:8888
 - [ ] 3-minute demo video
 - [ ] Public GitHub repository
 - [ ] Release: .lplug4 + .vsix
+
+## Future Improvements
+
+### Status Detection: Hooks & Structured APIs over Terminal Parsing
+
+The current terminal output parsing approach (status-parser.ts) is brittle — TUI redraws, stale patterns, and agent UI updates cause false positives. Several agents expose structured status mechanisms that are far more reliable:
+
+| Agent | Mechanism | How |
+|---|---|---|
+| **Claude Code** | [Hooks API](https://docs.anthropic.com/en/docs/claude-code/hooks) (12 lifecycle events) | Install hooks in `~/.claude/settings.json`: `PreToolUse`→running, `Notification` (matcher: `permission_prompt\|elicitation_dialog`)→waiting, `Stop`→idle. Write status to file or post to WebSocket. Agent-of-empires uses this approach — their terminal parser for Claude is a stub. |
+| **Gemini CLI** | `--output-format stream-json` | JSONL event stream in headless mode. Eliminates terminal parsing entirely. |
+| **OpenCode** | [SDK + SSE](https://opencode.ai/docs/sdk/) (`/event` endpoint) | Real-time events via `opencode-sdk-js`. |
+| **Codex** | None | Terminal parsing only. |
+| **Aider** | None | Terminal parsing only. |
+
+Priority: Claude Code hooks (highest impact — most complex detector, most used agent).
+
+### Reference: Competitor Submissions
+
+- [Conductor](https://devpost.com/software/conductor-tpdnkj) — similar multi-agent management concept
 
 ## Resources
 

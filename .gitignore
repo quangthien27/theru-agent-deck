@@ -1,3 +1,5 @@
 docs/
 !CLAUDE.md
 .aider*
+node_modules/
+packages/vscode-extension/out/

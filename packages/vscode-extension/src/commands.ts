@@ -95,7 +95,61 @@ export function registerCommands(
     vscode.commands.registerCommand('agentdeck.openSimulator', () => {
       openSimulatorWebview(context);
     }),
+
+    vscode.commands.registerCommand('agentdeck.attachTerminal', async () => {
+      const allTerminals = vscode.window.terminals;
+      const tracked = agentManager.getTrackedTerminals();
+
+      // Filter to untracked terminals
+      const untracked = allTerminals.filter(t => !tracked.has(t));
+      if (untracked.length === 0) {
+        vscode.window.showInformationMessage('No untracked terminals to attach.');
+        return;
+      }
+
+      // Let user pick a terminal
+      const terminalItems = untracked.map(t => ({
+        label: t.name,
+        terminal: t,
+      }));
+
+      const picked = await vscode.window.showQuickPick(terminalItems, {
+        placeHolder: 'Select a terminal to attach',
+      });
+      if (!picked) return;
+
+      // Auto-detect agent type from terminal name, or ask
+      const detected = detectAgentFromName(picked.label);
+      let agentType: AgentType;
+
+      if (detected) {
+        agentType = detected;
+      } else {
+        const agentPick = await vscode.window.showQuickPick(
+          SUPPORTED_AGENTS.map(a => ({ label: a, description: `Treat as ${a}` })),
+          { placeHolder: `Agent type for "${picked.label}"` }
+        );
+        if (!agentPick) return;
+        agentType = agentPick.label as AgentType;
+      }
+
+      // Use workspace folder as project path
+      const folders = vscode.workspace.workspaceFolders;
+      const projectPath = folders?.[0]?.uri.fsPath || '~';
+
+      const id = agentManager.attach(picked.terminal, agentType, projectPath);
+      vscode.window.showInformationMessage(`Attached "${picked.label}" as ${agentType} (${id})`);
+    }),
   );
+}
+
+/** Try to detect agent type from terminal name */
+function detectAgentFromName(name: string): AgentType | null {
+  const lower = name.toLowerCase();
+  for (const agent of SUPPORTED_AGENTS) {
+    if (lower.includes(agent)) return agent;
+  }
+  return null;
 }
 
 function getWaitingAgentId(agentManager: AgentManager): string | undefined {

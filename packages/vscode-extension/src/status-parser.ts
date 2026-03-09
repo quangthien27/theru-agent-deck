@@ -103,6 +103,11 @@ function matchesAny(content: string, patterns: string[]): boolean {
   return false;
 }
 
+/** Check if content matches common confirmation or permission prompts */
+function matchesCommonPrompts(content: string): boolean {
+  return matchesAny(content, COMMON_CONFIRM_PROMPTS) || matchesAny(content, COMMON_PERMISSION_PROMPTS);
+}
+
 // ── Spinner & busy detection constants ──
 
 const SPINNER_CHARS = [
@@ -126,11 +131,26 @@ function getLastLines(content: string, count: number): string[] {
   return result;
 }
 
+// ── Claude interactive UI patterns ──
+// AskUserQuestion UI uses ❯ as cursor, checkboxes, and navigation hints.
+// These indicate an active interactive prompt, not idle state.
+const CLAUDE_INTERACTIVE_UI_PATTERNS = [
+  'Esc to cancel', 'Esctocancel',
+  'Enter to select', 'Entertoselect',
+  'Tab/Arrow',
+];
+
+function hasClaudeInteractiveUI(content: string): boolean {
+  if (matchesAny(content, CLAUDE_INTERACTIVE_UI_PATTERNS)) return true;
+  if (content.includes('☐') && content.includes('Submit')) return true;
+  return false;
+}
+
 // ── Claude-specific detection ──
 
 function isClaudeBusy(lastLines: string[], recentLower: string): boolean {
   // Check explicit busy text
-  if (recentLower.includes('ctrl+c to interrupt') || recentLower.includes('esc to interrupt')) {
+  if (recentLower.includes('ctrl+c to interrterrupt') || recentLower.includes('esc to interrterrupt')) {
     return true;
   }
 
@@ -158,9 +178,11 @@ function isClaudeBusy(lastLines: string[], recentLower: string): boolean {
 }
 
 function isClaudeWaiting(lastLines: string[], recentContent: string): boolean {
-  // Shared patterns
-  if (matchesAny(recentContent, COMMON_CONFIRM_PROMPTS)) return true;
-  if (matchesAny(recentContent, COMMON_PERMISSION_PROMPTS)) return true;
+  // Only check the tail — stale prompts from answered questions linger in the
+  // full buffer. Using the tail ensures we only match the currently active prompt.
+  const tail = recentContent.slice(-800);
+
+  if (matchesCommonPrompts(tail)) return true;
 
   // Claude-specific permission dialog patterns
   const claudePrompts = [
@@ -180,24 +202,45 @@ function isClaudeWaiting(lastLines: string[], recentContent: string): boolean {
     'Use arrow keys to navigate',
     'Press Enter to select',
     'Approve this plan?', 'Execute plan?',
+    'Tab/Arrow keys',
+    'Tab/Arrowkeys',
   ];
-  if (matchesAny(recentContent, claudePrompts)) return true;
+  if (matchesAny(tail, claudePrompts)) return true;
+
+  // AskUserQuestion interactive UI (checkboxes, selection, etc.)
+  if (hasClaudeInteractiveUI(tail)) return true;
+
+  // AskUserQuestion checkbox UI: ☐ or ✔ with section labels
+  if (tail.includes('☐') || tail.includes('✔')) {
+    if (tail.includes('select')) return true;
+  }
 
   // NOTE: standalone ">" / "❯" prompt = IDLE (ready for next message), NOT waiting
   // That's handled by isClaudeIdle() below
   return false;
 }
 
-function isClaudeIdle(lastLines: string[]): boolean {
-  // Standalone prompt character means Claude finished and is ready for input
+function isClaudeIdle(lastLines: string[], recentContent: string): boolean {
+  // Standalone prompt character means Claude finished and is ready for input.
+  // lastLines are already stripped (from stripAnsi in detectStatus).
+  // Check this FIRST: if ❯ is at the tail, any interactive UI patterns
+  // earlier in the buffer are stale (user already dismissed them).
   const checkLines = lastLines.slice(-5);
+  let hasPrompt = false;
   for (const line of checkLines) {
-    let clean = stripAnsi(line).trim();
-    clean = clean.replace(/\u00A0/g, ' ');
-    if (clean === '>' || clean === '❯' || clean === '> ' || clean === '❯ ') return true;
-    if (clean.startsWith('❯ Try ') || clean.startsWith('> Try ')) return true;
+    const clean = line.trim().replace(/\u00A0/g, ' ');
+    if (clean === '>' || clean === '❯' || clean === '> ' || clean === '❯ ') { hasPrompt = true; break; }
+    if (clean.startsWith('❯ Try ') || clean.startsWith('> Try ')) { hasPrompt = true; break; }
   }
-  return false;
+
+  if (!hasPrompt) return false;
+
+  // If interactive selection UI is active in the TAIL, ❯ is a cursor not idle.
+  // Only check the tail (~500 chars) — stale patterns further back are irrelevant.
+  const tail = recentContent.slice(-500);
+  if (hasClaudeInteractiveUI(tail)) return false;
+
+  return true;
 }
 
 // ── Gemini-specific detection ──
@@ -214,9 +257,7 @@ function isGeminiBusy(recentLower: string): boolean {
 }
 
 function isGeminiWaiting(lastLines: string[], recentContent: string): boolean {
-  if (matchesAny(recentContent, COMMON_CONFIRM_PROMPTS)) return true;
-  if (matchesAny(recentContent, COMMON_PERMISSION_PROMPTS)) return true;
-  return false;
+  return matchesCommonPrompts(recentContent);
 }
 
 function isGeminiIdle(lastLines: string[], recentContent: string): boolean {
@@ -239,36 +280,94 @@ function isGeminiIdle(lastLines: string[], recentContent: string): boolean {
 
 // ── OpenCode-specific detection ──
 
+/** Check if OpenCode's interactive selection UI is active in the tail */
+function isOpenCodeInteractiveUI(tail: string): boolean {
+  if (tail.includes('enter confirm') && tail.includes('esc dismiss')) return true;
+  if (tail.includes('select') && tail.includes('confirm') && tail.includes('dismiss')) return true;
+  return false;
+}
+
+/** Check if OpenCode's tabbed multi-question form (AskUserQuestion) is active.
+ *  Shows tab labels like "Favorite Language  Productive Hours  Confirm"
+ *  with numbered options "1. TypeScript  2. Python" */
+function isOpenCodeTabbedForm(tail: string): boolean {
+  // "Confirm" tab label + numbered options = tabbed question form
+  // The "Confirm" tab is always the last tab (submit button equivalent)
+  if (!tail.includes('Confirm')) return false;
+  // Must also have numbered options nearby (at least "1." and "2.")
+  if (/\b1\.\s+\S/.test(tail) && /\b2\.\s+\S/.test(tail)) return true;
+  return false;
+}
+
 function isOpenCodeBusy(recentContent: string): boolean {
   // Use tail to avoid stale TUI content
   const tail = recentContent.slice(-500);
+  // Idle indicators override busy — if these are in the tail, not busy
   if (tail.includes('press enter to send') || tail.includes('Ask anything')) return false;
+  if (isOpenCodeInteractiveUI(tail)) return false;
+  if (isOpenCodeTabbedForm(tail)) return false;
+  // Explicit busy text
   if (tail.includes('esc interrupt') || tail.includes('esc to exit')) return true;
-  const pulseChars = ['█', '▓', '▒', '░'];
-  for (const ch of pulseChars) {
-    if (tail.includes(ch)) return true;
-  }
   const busyStrings = ['Thinking...', 'Generating...', 'Building tool call...', 'Waiting for tool response...'];
   for (const s of busyStrings) {
     if (tail.includes(s)) return true;
   }
+  // NOTE: Do NOT check for block chars (█, ▓, ▒, ░) — OpenCode's TUI uses
+  // these for headers, borders, and UI decorations, causing false positives.
   return false;
 }
 
-function isOpenCodeWaiting(_recentContent: string): boolean {
-  // OpenCode doesn't have traditional approval prompts
+function isOpenCodeWaiting(recentContent: string): boolean {
+  // Only check the tail — stale prompts from dismissed questions linger in the buffer
+  const tail = recentContent.slice(-800);
+  if (matchesCommonPrompts(tail)) return true;
+
+  // OpenCode interactive selection UI (AskUserQuestion equivalent)
+  // Shows: "⇆ tab  ↑↓ select  enter confirm  esc dismiss"
+  if (isOpenCodeInteractiveUI(tail)) return true;
+  // Tab navigation with selection options
+  if (tail.includes('tab') && tail.includes('select') && tail.includes('esc dismiss')) return true;
+
+  // OpenCode tabbed multi-question form — shows tab labels ending with "Confirm"
+  // and numbered options (1. TypeScript, 2. Python, etc.)
+  if (isOpenCodeTabbedForm(tail)) return true;
   return false;
 }
 
 function isOpenCodeIdle(recentContent: string): boolean {
-  return recentContent.includes('press enter to send') ||
-    recentContent.includes('Ask anything');
+  const tail = recentContent.slice(-800);
+
+  // If any interactive UI is active, not idle — check this first
+  if (isOpenCodeInteractiveUI(tail)) return false;
+  if (isOpenCodeTabbedForm(tail)) return false;
+
+  // Initial empty prompt — always idle regardless of other content
+  if (tail.includes('press enter to send') || tail.includes('Ask anything')) return true;
+
+  // Post-conversation idle: OpenCode shows the conversation with an input area.
+  // The status bar shows "ctrl+p commands" and "tab agents" when ready.
+  // Check tail for status bar presence AND absence of busy indicators.
+  const tailLower = tail.toLowerCase();
+  const hasBusy = tailLower.includes('thinking...') || tailLower.includes('generating...')
+    || tailLower.includes('esc interrupt') || tailLower.includes('esc to exit')
+    || tailLower.includes('building tool call') || tailLower.includes('waiting for tool response');
+  if (!hasBusy && tail.includes('ctrl+p commands')) return true;
+  // OpenCode shows "Build" + model name at bottom when idle in conversation
+  if (!hasBusy && tail.includes('Build') && tail.includes('Anthropic')) return true;
+
+  return false;
 }
 
 // ── Codex-specific detection ──
 
 function isCodexBusy(recentLower: string): boolean {
-  return recentLower.includes('esc to interrupt') || recentLower.includes('ctrl+c to interrupt');
+  // Terminal may truncate "Esc to interrupt" → "Esc to in", so match prefix
+  if (recentLower.includes('esc to interr') || recentLower.includes('ctrl+c to interr')) return true;
+  // "Working (30s •" timing indicator
+  if (/working\s*\(\d+s/.test(recentLower)) return true;
+  // Tool usage lines: "• Ran", "• Explored", "• Read" (Codex shows these while active)
+  if (recentLower.includes('• ran ') || recentLower.includes('• explored') || recentLower.includes('• read ')) return true;
+  return false;
 }
 
 function isCodexWaiting(recentContent: string): boolean {
@@ -286,10 +385,22 @@ function isCodexWaiting(recentContent: string): boolean {
 
 function isCodexIdle(recentContent: string, lastLines: string[]): boolean {
   if (recentContent.includes('codex>') || recentContent.includes('How can I help')) return true;
+  // Codex ready state: shows task suggestions and command hints
+  if (recentContent.includes('describe a task') || recentContent.includes('To get started')) return true;
+  if (recentContent.includes('/init') && recentContent.includes('/status') && recentContent.includes('/approvals')) return true;
+  // Post-completion idle: Codex footer (⏎ send ⇧⏎ newline) is ALWAYS visible,
+  // so we can't use it as an idle signal. Instead, idle = footer present WITHOUT
+  // any busy indicators (Esc to in*, Working (Xs, tool usage lines).
+  // IMPORTANT: Only check the tail (~500 chars) for busy signals — stale
+  // "Esc to interrupt" from a previous working state lingers in the full buffer.
+  const tail500 = recentContent.slice(-500).toLowerCase();
+  const hasBusySignal = tail500.includes('esc to interr') || /working\s*\(\d+s/.test(tail500)
+    || tail500.includes('• ran ') || tail500.includes('• explored') || tail500.includes('• read ');
+  if (!hasBusySignal && tail500.includes('send') && tail500.includes('newline') && tail500.includes('transcript')) return true;
   // Codex uses ">" as its TUI prompt at row 1, col 1
-  // Check last lines for standalone ">"
+  // Check last lines for standalone ">" (lastLines already stripped)
   for (const line of lastLines.slice(-5)) {
-    const clean = stripAnsi(line).trim();
+    const clean = line.trim();
     if (clean === '>' || clean === '> ') return true;
   }
   // Also check the tail of stripped content for the prompt
@@ -306,11 +417,35 @@ function isAiderWaiting(lastLines: string[], recentContent: string): boolean {
 }
 
 function isAiderIdle(lastLines: string[]): boolean {
+  // lastLines are already stripped (from stripAnsi in detectStatus)
+  for (const line of lastLines.slice(-3)) {
+    const trimmed = line.trim();
+    if (trimmed === 'aider>' || trimmed === 'aider> ') return true;
+    // Bare ">" only counts as idle if it's the very last line (not followed by output)
+    if (trimmed === '>' || trimmed === '> ') {
+      // Make sure it's actually the last meaningful line
+      if (line === lastLines[lastLines.length - 1] || line === lastLines[lastLines.length - 2]) return true;
+    }
+  }
+  return false;
+}
+
+function isAiderBusy(lastLines: string[], recentLower: string): boolean {
+  // Progress bars: "Scanning repo: 100%|██|"
+  if (recentLower.includes('scanning repo') || recentLower.includes('repo-map')) return true;
+  // "Updating repo map"
+  if (recentLower.includes('updating repo map')) return true;
+  // Aider shows "Thinking..." or model responses
+  if (recentLower.includes('thinking...')) return true;
+  // Progress bar characters
+  if (recentLower.includes('█') || recentLower.includes('░')) return true;
+  // "Applying edit" or "Committing"
+  if (recentLower.includes('applying edit') || recentLower.includes('committing')) return true;
+  // Braille spinners (fallback)
   for (const line of lastLines.slice(-5)) {
-    const trimmed = stripAnsi(line).trim();
-    if (trimmed === 'aider>' || trimmed.startsWith('aider>')) return true;
-    // Aider also uses bare ">" after setup completes
-    if (trimmed === '>' || trimmed === '> ') return true;
+    for (const ch of line) {
+      if (SPINNER_SET.has(ch)) return true;
+    }
   }
   return false;
 }
@@ -318,9 +453,7 @@ function isAiderIdle(lastLines: string[]): boolean {
 // ── Generic detection ──
 
 function isGenericWaiting(lastLines: string[], recentContent: string): boolean {
-  if (matchesAny(recentContent, COMMON_CONFIRM_PROMPTS)) return true;
-  if (matchesAny(recentContent, COMMON_PERMISSION_PROMPTS)) return true;
-  return false;
+  return matchesCommonPrompts(recentContent);
 }
 
 function isGenericIdle(lastLines: string[]): boolean {
@@ -334,14 +467,68 @@ function isGenericIdle(lastLines: string[]): boolean {
   return false;
 }
 
+// ── Error detection ──
+// Check if recent output (near the tail) contains error messages.
+// Used when agent appears idle — if errors are nearby, status = error.
+
+/** Common error patterns across all agents */
+const COMMON_ERROR_PATTERNS = [
+  'error:', 'Error:', 'ERROR:',
+  'Traceback (most recent call last)',
+  'traceback (most recent call last)',
+  'Exception:', 'exception:',
+  'FATAL', 'fatal:',
+  'panic:', 'PANIC:',
+];
+
+function hasRecentErrors(recentContent: string, agentType: string): boolean {
+  // Only check the last ~800 chars — errors further back are stale
+  const tail = recentContent.slice(-800);
+  const tailLower = tail.toLowerCase();
+
+  // Common API/runtime errors across all agents
+  if (tailLower.includes('error:') || tailLower.includes('apierror')) return true;
+  if (tailLower.includes('rate limit') || tailLower.includes('ratelimit')) return true;
+
+  // Agent-specific errors
+  switch (agentType) {
+    case 'aider':
+      if (tailLower.includes('litellm.') && tailLower.includes('error')) return true;
+      if (tailLower.includes('api error')) return true;
+      if (tailLower.includes('notfounderror') || tailLower.includes('not found')) return true;
+      if (tailLower.includes('connection error') || tailLower.includes('timeout error')) return true;
+      break;
+
+    case 'claude':
+      if (tailLower.includes('overloaded')) return true;
+      if (tailLower.includes('crashed') || tailLower.includes('panic')) return true;
+      break;
+
+    case 'gemini':
+      if (tailLower.includes('quota exceeded')) return true;
+      break;
+  }
+
+  // Generic: check common patterns
+  for (const p of COMMON_ERROR_PATTERNS) {
+    if (tail.includes(p)) return true;
+  }
+  return false;
+}
+
 // ── Main status detection ──
 
-export function detectStatus(output: string, currentStatus: AgentStatus, agentType?: string): AgentStatus {
-  if (!output || output.length < 10) return currentStatus;
+export interface DetectionResult {
+  status: AgentStatus;
+  confidence: number;  // 0.0 = no idea, 1.0 = certain. AI fires below threshold (e.g. 0.6)
+}
+
+export function detectStatus(output: string, currentStatus: AgentStatus, agentType?: string): DetectionResult {
+  if (!output || output.length < 10) return { status: currentStatus, confidence: 0.0 };
 
   const stripped = stripAnsi(output.slice(-4000));
   const lastLines = getLastLines(stripped, 15);
-  if (lastLines.length === 0 && stripped.trim().length === 0) return currentStatus;
+  if (lastLines.length === 0 && stripped.trim().length === 0) return { status: currentStatus, confidence: 0.0 };
 
   // Use the full stripped tail for pattern matching (not just joined lines).
   // TUI apps use cursor positioning instead of newlines, so getLastLines
@@ -350,38 +537,50 @@ export function detectStatus(output: string, currentStatus: AgentStatus, agentTy
   const recentLower = recentContent.toLowerCase();
 
   const tool = (agentType || '').toLowerCase();
+  // Known agent type = higher base confidence. Generic/unknown = lower.
+  const isKnownAgent = ['claude', 'gemini', 'opencode', 'codex', 'aider'].includes(tool);
 
-  // ── Step 1: Check IDLE first ──
-  // If the tail of the buffer shows an idle prompt, earlier waiting/busy
-  // signals are stale (agent moved past them). This prevents old prompts
-  // lingering in the buffer from keeping status stuck on "waiting".
+  // ── Run all detectors independently ──
+  // Collect which states match, then resolve conflicts.
+  // If multiple match → confidence drops (ambiguous → AI should decide).
+
+  // Check IDLE
   let idle = false;
+  let idleConfidence = isKnownAgent ? 0.9 : 0.5;
   switch (tool) {
     case 'claude':
-      idle = isClaudeIdle(lastLines);
+      idle = isClaudeIdle(lastLines, recentContent);
+      idleConfidence = 0.95;
       break;
     case 'gemini':
       idle = isGeminiIdle(lastLines, recentContent);
+      idleConfidence = 0.9;
       break;
     case 'opencode':
       idle = isOpenCodeIdle(recentContent);
+      idleConfidence = 0.9;
       break;
     case 'codex':
       idle = isCodexIdle(recentContent, lastLines);
+      if (idle && !recentContent.includes('codex>') && !recentContent.includes('How can I help')
+          && !recentContent.includes('describe a task')) {
+        idleConfidence = 0.6;
+      } else {
+        idleConfidence = 0.9;
+      }
       break;
     case 'aider':
       idle = isAiderIdle(lastLines);
+      idleConfidence = lastLines.slice(-3).some(l => l.trim().startsWith('aider>')) ? 0.95 : 0.5;
       break;
     default:
       idle = isGenericIdle(lastLines);
+      idleConfidence = 0.4;
   }
 
-  if (idle) return 'idle';
-
-  // ── Step 2: Check WAITING ──
-  // Only reached if idle prompt is NOT at the tail. This means any
-  // confirmation prompt found is still the active, unanswered one.
+  // Check WAITING
   let waiting = false;
+  let waitingConfidence = isKnownAgent ? 0.9 : 0.5;
   switch (tool) {
     case 'claude':
       waiting = isClaudeWaiting(lastLines, recentContent);
@@ -402,39 +601,77 @@ export function detectStatus(output: string, currentStatus: AgentStatus, agentTy
       waiting = isGenericWaiting(lastLines, recentContent);
   }
 
-  if (waiting) return 'waiting';
-
-  // ── Step 3: Check BUSY ──
+  // Check BUSY
   let busy = false;
+  let busyConfidence = isKnownAgent ? 0.9 : 0.5;
   switch (tool) {
     case 'claude':
       busy = isClaudeBusy(lastLines, recentLower);
+      busyConfidence = 0.95;
       break;
     case 'gemini':
       busy = isGeminiBusy(recentLower);
+      busyConfidence = 0.85;
       break;
     case 'opencode':
       busy = isOpenCodeBusy(recentContent);
+      busyConfidence = 0.85;
       break;
     case 'codex':
       busy = isCodexBusy(recentLower);
+      busyConfidence = 0.9;
+      break;
+    case 'aider':
+      busy = isAiderBusy(lastLines, recentLower);
+      busyConfidence = 0.8;
       break;
     default:
-      // Generic busy: look for braille spinners
       for (const line of lastLines.slice(-5)) {
         for (const ch of line) {
           if (SPINNER_SET.has(ch)) { busy = true; break; }
         }
         if (busy) break;
       }
+      busyConfidence = 0.4;
   }
 
-  if (busy) return 'working';
+  // ── Resolve: count how many states matched ──
+  const matches = [
+    idle && { status: 'idle' as AgentStatus, confidence: idleConfidence },
+    waiting && { status: 'waiting' as AgentStatus, confidence: waitingConfidence },
+    busy && { status: 'working' as AgentStatus, confidence: busyConfidence },
+  ].filter(Boolean) as { status: AgentStatus; confidence: number }[];
 
-  // ── Step 4: Default ──
-  // If we were working and no idle/waiting/busy detected, stay working
-  // (output may have just paused briefly between tool calls)
-  return currentStatus;
+  if (matches.length === 1) {
+    // Exactly one match — high confidence, use it directly
+    const match = matches[0];
+    // If idle, check for recent errors before returning
+    if (match.status === 'idle' && hasRecentErrors(recentContent, tool)) {
+      return { status: 'error', confidence: 0.85 };
+    }
+    return match;
+  }
+
+  if (matches.length > 1) {
+    // Multiple states matched — ambiguous. Use priority order (idle > waiting > busy)
+    // but drop confidence so AI classifier gets a chance to weigh in.
+    const priority: AgentStatus[] = ['idle', 'waiting', 'working'];
+    const winner = priority.find(s => matches.some(m => m.status === s))!;
+    const winnerConf = matches.find(m => m.status === winner)!.confidence;
+    // Halve confidence to signal ambiguity — this pushes below the AI threshold
+    const ambiguousConfidence = Math.min(winnerConf * 0.5, 0.4);
+
+    if (winner === 'idle' && hasRecentErrors(recentContent, tool)) {
+      return { status: 'error', confidence: ambiguousConfidence };
+    }
+    return { status: winner, confidence: ambiguousConfidence };
+  }
+
+  // ── No match — check ERROR, then default ──
+  if (hasRecentErrors(recentContent, tool)) {
+    return { status: 'error', confidence: 0.7 };
+  }
+  return { status: currentStatus, confidence: 0.0 };
 }
 
 // ── Approval parsing (for Logi Plugin display) ──

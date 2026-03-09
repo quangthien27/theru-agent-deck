@@ -53,7 +53,7 @@
       },
       {
         "command": "agentdeck.kill",
-        "title": "AgentDeck: Kill Agent",
+        "title": "AgentDeck: End Agent",
         "icon": "$(trash)"
       },
       {
@@ -70,8 +70,38 @@
         "command": "agentdeck.openSimulator",
         "title": "AgentDeck: Open Simulator",
         "icon": "$(device-desktop)"
+      },
+      {
+        "command": "agentdeck.attachTerminal",
+        "title": "AgentDeck: Attach Terminal",
+        "icon": "$(plug)"
       }
     ],
+    "configuration": {
+      "title": "AgentDeck",
+      "properties": {
+        "agentdeck.autoAttach": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically detect and attach manually launched agents (claude, gemini, aider, codex, opencode) from any terminal"
+        },
+        "agentdeck.ai.enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Use local Ollama model as fallback when pattern matching is uncertain"
+        },
+        "agentdeck.ai.ollamaUrl": {
+          "type": "string",
+          "default": "http://localhost:11434",
+          "description": "Ollama API endpoint"
+        },
+        "agentdeck.ai.model": {
+          "type": "string",
+          "default": "qwen2.5:0.5b",
+          "description": "Ollama model to use for classification (smaller = faster)"
+        }
+      }
+    },
     "menus": {
       "view/title": [
         {
