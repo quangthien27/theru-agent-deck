@@ -51,13 +51,21 @@ class AgentTreeItem extends vscode.TreeItem {
     super(label, collapsibleState);
 
     if (agent) {
-      this.description = `${agent.agent} · ${agent.projectPath.split('/').pop()}`;
+      const dirName = agent.projectPath.split('/').pop() || '?';
+      const elapsed = formatElapsed(agent.createdAt);
+      this.description = `${agent.agent} \u00B7 ${dirName} \u00B7 ${statusLabel(agent.status)} \u00B7 ${elapsed}`;
+
+      const approvalLine = agent.approval ? `\n\n**Needs input:** ${agent.approval.summary}` : '';
       this.tooltip = new vscode.MarkdownString(
-        `**${agent.name}** (${agent.agent})\n\n` +
-        `Status: ${agent.status}\n\n` +
-        `Project: ${agent.projectPath}\n\n` +
-        (agent.approval ? `⚠ ${agent.approval.summary}` : '')
+        `**${agent.name}** \u2014 ${agent.agent}\n\n` +
+        `$(${statusThemeIcon(agent.status)}) ${statusLabel(agent.status)}\n\n` +
+        `**Project:** \`${dirName}\`\n\n` +
+        `**Path:** ${agent.projectPath}\n\n` +
+        `**Session:** ${elapsed}` +
+        approvalLine
       );
+      this.tooltip.supportThemeIcons = true;
+
       this.contextValue = `agent-${agent.status}`;
 
       // Click to show terminal
@@ -66,6 +74,15 @@ class AgentTreeItem extends vscode.TreeItem {
         title: 'Show Terminal',
         arguments: [agent.id],
       };
+
+      // Use theme icon for visual distinction
+      this.iconPath = new vscode.ThemeIcon(
+        statusThemeIcon(agent.status),
+        statusThemeColor(agent.status)
+      );
+
+      // Override label to just the name (icon comes from iconPath)
+      this.label = agent.name;
     } else {
       this.contextValue = 'no-agents';
     }
@@ -80,4 +97,47 @@ function statusIcon(status: AgentStatus): string {
     case 'error': return '$(error)';
     case 'offline': return '$(circle-slash)';
   }
+}
+
+function statusThemeIcon(status: AgentStatus | 'none'): string {
+  switch (status) {
+    case 'working': return 'sync~spin';
+    case 'waiting': return 'bell-dot';
+    case 'idle': return 'circle-outline';
+    case 'error': return 'error';
+    case 'offline': return 'circle-slash';
+    default: return 'circle-outline';
+  }
+}
+
+function statusThemeColor(status: AgentStatus): vscode.ThemeColor | undefined {
+  switch (status) {
+    case 'working': return new vscode.ThemeColor('charts.green');
+    case 'waiting': return new vscode.ThemeColor('charts.yellow');
+    case 'error': return new vscode.ThemeColor('charts.red');
+    case 'idle': return new vscode.ThemeColor('descriptionForeground');
+    case 'offline': return new vscode.ThemeColor('disabledForeground');
+    default: return undefined;
+  }
+}
+
+function statusLabel(status: AgentStatus): string {
+  switch (status) {
+    case 'working': return 'Running';
+    case 'waiting': return 'Needs Input';
+    case 'idle': return 'Ready';
+    case 'error': return 'Error';
+    case 'offline': return 'Offline';
+  }
+}
+
+function formatElapsed(isoDate: string): string {
+  if (!isoDate) return '';
+  const elapsed = Math.floor((Date.now() - new Date(isoDate).getTime()) / 1000);
+  if (elapsed < 0) return '0s';
+  if (elapsed < 60) return `${elapsed}s`;
+  const m = Math.floor(elapsed / 60);
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  return `${h}h ${m % 60}m`;
 }

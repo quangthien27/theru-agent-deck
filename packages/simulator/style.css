@@ -65,7 +65,8 @@ body {
   margin-bottom: 24px;
 }
 
-/* Keypad */
+/* ── Keypad (3x3 LCD grid) ─────────────────────────────────── */
+
 .keypad-grid {
   display: grid;
   grid-template-columns: repeat(3, 100px);
@@ -88,13 +89,8 @@ body {
   overflow: hidden;
 }
 
-.lcd-btn:hover {
-  border-color: #444;
-}
-
-.lcd-btn:active {
-  transform: scale(0.95);
-}
+.lcd-btn:hover { border-color: #444; }
+.lcd-btn:active { transform: scale(0.95); }
 
 /* Agent slot rendering */
 .lcd-btn .agent-name {
@@ -119,16 +115,19 @@ body {
   text-transform: uppercase;
 }
 
-/* Empty slot */
-.lcd-btn.empty {
-  background: #1e1e1e;
+.lcd-btn .agent-icon {
+  position: absolute;
+  bottom: 6px;
+  left: 6px;
+  width: 18px;
+  height: 18px;
+  border-radius: 3px;
+  opacity: 0.7;
 }
 
-.lcd-btn.empty::after {
-  content: "--";
-  color: #505050;
-  font-size: 14px;
-}
+/* Empty slot */
+.lcd-btn.empty { background: #1e1e1e; cursor: default; }
+.lcd-btn.empty::after { content: "--"; color: #505050; font-size: 14px; }
 
 /* Status colors */
 .lcd-btn.status-idle     { background: #5a5a5a; }
@@ -137,27 +136,22 @@ body {
 .lcd-btn.status-error    { background: #b42828; }
 .lcd-btn.status-offline  { background: #323232; }
 
-/* Pulsing for waiting (needs input) */
-.lcd-btn.status-waiting {
-  animation: pulse-yellow 1.5s ease-in-out infinite;
-}
-
+/* Pulse: waiting */
+.lcd-btn.status-waiting { animation: pulse-yellow 1.5s ease-in-out infinite; }
 @keyframes pulse-yellow {
   0%, 100% { background: #b4a01e; }
-  50% { background: #d4c030; }
+  50%      { background: #d4c030; }
 }
 
-/* Pulsing for error */
-.lcd-btn.status-error {
-  animation: pulse-red 1.5s ease-in-out infinite;
-}
-
+/* Pulse: error */
+.lcd-btn.status-error { animation: pulse-red 1.5s ease-in-out infinite; }
 @keyframes pulse-red {
   0%, 100% { background: #b42828; }
-  50% { background: #d44040; }
+  50%      { background: #d44040; }
 }
 
-/* Control buttons (bottom row) */
+/* ── Control buttons (bottom row) ──────────────────────────── */
+
 .ctrl-btn {
   background: #282832 !important;
   animation: none !important;
@@ -180,61 +174,113 @@ body {
   margin-top: 2px;
 }
 
-.ctrl-btn .ctrl-sub {
-  font-size: 10px;
-  color: #ff8c8c;
+/* Sessions counter button */
+.sessions-btn .sess-breakdown {
+  display: flex;
+  gap: 6px;
+  font-size: 11px;
+  margin-top: 2px;
+  justify-content: center;
+}
+
+.sess-working { color: #5cb870; }
+.sess-waiting { color: #d4b030; }
+.sess-error   { color: #e05050; }
+.sess-idle    { color: #999; }
+
+.sess-page {
+  font-size: 9px;
+  color: #666;
   margin-top: 2px;
 }
 
-#btn-custom {
-  background: #323232 !important;
+/* Menu button */
+.menu-btn { background: #1e2832 !important; }
+.menu-icon { font-size: 22px !important; color: #88aacc !important; }
+
+/* ── New Agent tiles ───────────────────────────────────────── */
+
+.new-agent-btn {
+  background: #1a1a24 !important;
+  animation: none !important;
 }
 
-#btn-custom .ctrl-label {
-  color: #a0a0a0;
+.new-agent-btn:hover { background: #252530 !important; }
+
+.new-agent-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  object-fit: contain;
 }
 
-/* Approve/Reject button styles (bottom row in approve mode) */
+.new-agent-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: #ddd;
+  margin-top: 2px;
+}
+
+.new-agent-desc {
+  font-size: 9px;
+  color: #666;
+  margin-top: 2px;
+}
+
+/* ── Menu action tiles ─────────────────────────────────────── */
+
+.menu-action-btn {
+  background: #1a1a24 !important;
+  animation: none !important;
+}
+
+.menu-action-btn:hover { background: #252530 !important; }
+
+.menu-action-icon {
+  font-size: 24px;
+  font-weight: 700;
+}
+
+.menu-action-label {
+  font-size: 10px;
+  color: #bbb;
+  margin-top: 4px;
+  text-align: center;
+}
+
+/* ── Confirm / Cancel buttons ─────────────────────────────── */
+
 .approve-btn {
   background: #1e4028 !important;
   border-color: #2d7840 !important;
 }
-
-.approve-btn:hover {
-  background: #255030 !important;
-}
-
-.approve-icon {
-  color: #5cb870 !important;
-}
+.approve-btn:hover { background: #255030 !important; }
+.approve-icon { color: #5cb870 !important; }
 
 .reject-btn {
   background: #402020 !important;
   border-color: #784040 !important;
 }
+.reject-btn:hover { background: #502828 !important; }
+.reject-icon { color: #c86060 !important; }
 
-.reject-btn:hover {
-  background: #502828 !important;
+/* ── Navigation buttons (approval page) ──────────────────── */
+
+.nav-btn {
+  background: #1e2832 !important;
+  border-color: #2a3a4a !important;
 }
+.nav-btn:hover { background: #253540 !important; }
+.nav-btn .ctrl-icon { color: #88aacc !important; }
 
-.reject-icon {
-  color: #c86060 !important;
-}
+/* ── Context tiles (approval page info) ────────────────────── */
 
-/* Context buttons (approval page info tiles) */
 .context-btn {
   background: #1e1e28 !important;
   animation: none !important;
   padding: 8px !important;
 }
 
-.context-btn .context-label {
-  font-size: 12px;
-  color: #999;
-  text-align: center;
-}
-
-/* Identity tile (agent + project) */
 .context-identity {
   background: #202038 !important;
   border-color: #3a3a5a !important;
@@ -253,7 +299,6 @@ body {
   margin-top: 4px;
 }
 
-/* Info tiles (session, status) */
 .ctx-value {
   font-size: 18px;
   font-weight: 600;
@@ -276,14 +321,11 @@ body {
   line-height: 1.3;
 }
 
-.ctx-waiting {
-  color: #d4b030;
-}
+.ctx-waiting { color: #d4b030; }
 
-/* Dialpad */
-.dialpad {
-  flex: 1;
-}
+/* ── Dialpad ───────────────────────────────────────────────── */
+
+.dialpad { flex: 1; }
 
 .dialpad-grid {
   display: grid;
@@ -307,34 +349,14 @@ body {
   letter-spacing: 0.5px;
 }
 
-.dial-btn:hover {
-  background: #252525;
-  border-color: #444;
-}
+.dial-btn:hover { background: #252525; border-color: #444; }
+.dial-btn:active { transform: scale(0.95); }
 
-.dial-btn:active {
-  transform: scale(0.95);
-}
+.dial-btn.yes { border-color: #1e5028; color: #5cb870; }
+.dial-btn.yes:hover { background: #142818; border-color: #2d7840; }
 
-.dial-btn.yes {
-  border-color: #1e5028;
-  color: #5cb870;
-}
-
-.dial-btn.yes:hover {
-  background: #142818;
-  border-color: #2d7840;
-}
-
-.dial-btn.no {
-  border-color: #502020;
-  color: #c86060;
-}
-
-.dial-btn.no:hover {
-  background: #281414;
-  border-color: #784040;
-}
+.dial-btn.no { border-color: #502020; color: #c86060; }
+.dial-btn.no:hover { background: #281414; border-color: #784040; }
 
 /* Dial */
 .dial-area {
@@ -356,20 +378,23 @@ body {
   cursor: grab;
   position: relative;
   user-select: none;
+  transition: transform 0.15s ease-out;
 }
 
-.dial:hover {
-  border-color: #555;
-}
+.dial:hover { border-color: #555; }
+.dial:active { cursor: grabbing; }
 
 .dial-knob {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: #555;
+  background: #888;
   position: absolute;
   top: 12px;
+  transition: background 0.15s;
 }
+
+.dial:hover .dial-knob { background: #aaa; }
 
 .dial-label {
   font-size: 9px;
@@ -403,14 +428,8 @@ body {
   transition: background 0.15s;
 }
 
-.roller-btn:hover {
-  background: #252525;
-  border-color: #444;
-}
-
-.roller-btn:active {
-  background: #333;
-}
+.roller-btn:hover { background: #252525; border-color: #444; }
+.roller-btn:active { background: #333; }
 
 .roller-label {
   font-size: 9px;
@@ -419,14 +438,12 @@ body {
   min-height: 14px;
 }
 
-/* Ring overlay */
+/* ── Ring overlay (kept for future use, hidden by default) ── */
+
 .ring-overlay {
   display: none;
   position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
+  top: 0; left: 0; right: 0; bottom: 0;
   background: rgba(0, 0, 0, 0.6);
   z-index: 100;
   justify-content: center;
@@ -434,117 +451,10 @@ body {
   backdrop-filter: blur(4px);
 }
 
-.ring-overlay.active {
-  display: flex;
-}
+.ring-overlay.active { display: flex; }
 
-.ring-panel {
-  width: 480px;
-  max-height: 70vh;
-  background: #1a1a1e;
-  border: 2px solid #333;
-  border-radius: 16px;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-}
+/* ── Log panel ─────────────────────────────────────────────── */
 
-.ring-header {
-  padding: 16px 20px;
-  border-bottom: 1px solid #2a2a2a;
-  font-size: 14px;
-  font-weight: 600;
-}
-
-.ring-content {
-  flex: 1;
-  overflow-y: auto;
-  padding: 16px 20px;
-  font-size: 12px;
-  line-height: 1.6;
-  white-space: pre-wrap;
-  color: #bbb;
-}
-
-.ring-content .diff-add {
-  color: #6fbf73;
-  background: rgba(111, 191, 115, 0.08);
-}
-
-.ring-content .diff-remove {
-  color: #e06060;
-  background: rgba(224, 96, 96, 0.08);
-}
-
-.ring-content .diff-hunk {
-  color: #6688cc;
-}
-
-.ring-footer {
-  padding: 12px 20px;
-  border-top: 1px solid #2a2a2a;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  font-size: 11px;
-  color: #666;
-}
-
-/* Ring list items */
-.ring-list-item {
-  padding: 10px 14px;
-  border-radius: 8px;
-  margin-bottom: 4px;
-  color: #bbb;
-  transition: background 0.1s;
-  white-space: normal;
-  line-height: 1.5;
-}
-
-.ring-list-item.active {
-  background: #252538;
-  color: #fff;
-  outline: 2px solid #5588cc;
-  outline-offset: -2px;
-}
-
-.ring-dim {
-  color: #666;
-  font-size: 11px;
-}
-
-.ring-waiting {
-  color: #d4b030;
-}
-
-.ring-detail {
-  padding: 6px 0;
-  white-space: normal;
-}
-
-.ring-detail .ring-dim {
-  display: inline-block;
-  min-width: 64px;
-  margin-right: 8px;
-}
-
-/* Status dot (inline, used in Ring lists) */
-.ring-status-dot {
-  display: inline-block;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  margin-right: 6px;
-  vertical-align: middle;
-}
-
-.ring-status-dot.status-idle    { background: #888; }
-.ring-status-dot.status-working { background: #4caf50; }
-.ring-status-dot.status-waiting { background: #d4b030; }
-.ring-status-dot.status-error   { background: #e05050; }
-.ring-status-dot.status-offline { background: #444; }
-
-/* Log panel */
 .log-panel {
   border: 1px solid #222;
   border-radius: 8px;
@@ -572,10 +482,7 @@ body {
   cursor: pointer;
 }
 
-.log-header button:hover {
-  border-color: #555;
-  color: #999;
-}
+.log-header button:hover { border-color: #555; color: #999; }
 
 .log-content {
   height: 140px;
@@ -586,16 +493,8 @@ body {
   color: #555;
 }
 
-.log-content .log-entry {
-  display: flex;
-  gap: 8px;
-}
-
-.log-content .log-time {
-  color: #444;
-  flex-shrink: 0;
-}
-
+.log-content .log-entry { display: flex; gap: 8px; }
+.log-content .log-time { color: #444; flex-shrink: 0; }
 .log-content .log-msg { color: #777; }
 .log-content .log-msg.state { color: #5588bb; }
 .log-content .log-msg.event { color: #bb8855; }

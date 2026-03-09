@@ -54,7 +54,8 @@ export interface FocusAgent {
 export interface AgentCommand {
   type: 'command';
   agentId: string;
-  action: 'approve' | 'reject' | 'pause' | 'resume' | 'kill';
+  action: 'approve' | 'reject' | 'pause' | 'resume' | 'kill'
+        | 'nav_up' | 'nav_down' | 'nav_left' | 'nav_right';
 }
 
 export interface LaunchAgent {

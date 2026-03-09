@@ -3,6 +3,7 @@ import { AgentManager } from './agent-manager';
 import { WSServer } from './ws-server';
 import { AgentSidebarProvider } from './sidebar-provider';
 import { registerCommands } from './commands';
+import { OllamaClassifier } from './ai-classifier';
 import type { ClientMessage, AgentStatus } from './protocol';
 
 const WS_PORT = 9999;
@@ -13,12 +14,38 @@ let sidebarProvider: AgentSidebarProvider;
 let statusBarItem: vscode.StatusBarItem;
 
 export function activate(context: vscode.ExtensionContext) {
-  const outputChannel = vscode.window.createOutputChannel('AgentDeck');
-  context.subscriptions.push(outputChannel);
+  const sessionsLog = vscode.window.createOutputChannel('AgentDeck Sessions');
+  const aiLog = vscode.window.createOutputChannel('AgentDeck AI');
+  context.subscriptions.push(sessionsLog, aiLog);
 
   try {
   // ── Agent Manager ──────────────────────────────────────
-  agentManager = new AgentManager(outputChannel);
+  agentManager = new AgentManager(sessionsLog);
+
+  // ── AI Classifier (optional Ollama fallback) ─────────
+  function applyAISettings() {
+    const cfg = vscode.workspace.getConfiguration('agentdeck');
+    const enabled = cfg.get<boolean>('ai.enabled', false);
+    if (enabled) {
+      const url = cfg.get<string>('ai.ollamaUrl', 'http://localhost:11434');
+      const mdl = cfg.get<string>('ai.model', 'qwen2.5:0.5b');
+      agentManager.setAIClassifier(new OllamaClassifier(url, mdl, aiLog), aiLog);
+      aiLog.appendLine(`Ollama classifier enabled: ${url} model=${mdl}`);
+    } else {
+      agentManager.clearAIClassifier();
+      aiLog.appendLine('Ollama classifier disabled');
+    }
+  }
+  applyAISettings();
+
+  // Re-apply when settings change — no restart needed
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeConfiguration(e => {
+      if (e.affectsConfiguration('agentdeck.ai')) {
+        applyAISettings();
+      }
+    }),
+  );
 
   // ── Sidebar ────────────────────────────────────────────
   sidebarProvider = new AgentSidebarProvider();
@@ -70,10 +97,10 @@ export function activate(context: vscode.ExtensionContext) {
     { dispose: () => sidebarProvider.dispose() },
   );
 
-  outputChannel.appendLine(`AgentDeck activated. WebSocket server on :${WS_PORT}`);
+  sessionsLog.appendLine(`AgentDeck activated. WebSocket server on :${WS_PORT}`);
 
   } catch (err: any) {
-    outputChannel.appendLine(`[AgentDeck] Activation error: ${err.message}\n${err.stack}`);
+    sessionsLog.appendLine(`[AgentDeck] Activation error: ${err.message}\n${err.stack}`);
     vscode.window.showErrorMessage(`AgentDeck failed to activate: ${err.message}`);
   }
 }
@@ -100,6 +127,18 @@ function handleClientMessage(msg: ClientMessage): void {
           break;
         case 'kill':
           agentManager.kill(msg.agentId);
+          break;
+        case 'nav_up':
+          agentManager.navigate(msg.agentId, 'up');
+          break;
+        case 'nav_down':
+          agentManager.navigate(msg.agentId, 'down');
+          break;
+        case 'nav_left':
+          agentManager.navigate(msg.agentId, 'left');
+          break;
+        case 'nav_right':
+          agentManager.navigate(msg.agentId, 'right');
           break;
       }
       break;
