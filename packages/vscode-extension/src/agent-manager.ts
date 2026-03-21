@@ -1,9 +1,13 @@
 import * as vscode from 'vscode';
 import { EventEmitter } from 'events';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
 import type { AgentSession, AgentStatus, AgentType } from './protocol';
 import { agentCommand, SUPPORTED_AGENTS } from './protocol';
 import { detectStatus, parseApproval, stripAnsi } from './status-parser';
 import type { OllamaClassifier } from './ai-classifier';
+
+const execFileAsync = promisify(execFile);
 
 /** Max chars to keep in agent output buffer (status detection window) */
 const OUTPUT_BUFFER_CAP = 8000;
@@ -21,6 +25,8 @@ interface ManagedAgent {
   outputBuffer: string;
   /** Buffer length when AI last classified — skip if buffer hasn't grown enough */
   aiLastBufLen: number;
+  worktreePath?: string;
+  worktreeBranch?: string;
 }
 
 export class AgentManager extends EventEmitter {
@@ -102,6 +108,8 @@ export class AgentManager extends EventEmitter {
         projectPath: agent.projectPath,
         createdAt: agent.createdAt,
         approval,
+        worktreePath: agent.worktreePath,
+        worktreeBranch: agent.worktreeBranch,
       });
     }
     return result;
@@ -130,6 +138,44 @@ export class AgentManager extends EventEmitter {
 
   launch(agentType: AgentType, projectPath: string, message?: string): string {
     const id = `agent-${this.nextId++}`;
+    const worktreeEnabled = vscode.workspace.getConfiguration('agentdeck').get<boolean>('worktree.enabled', true);
+
+    if (worktreeEnabled) {
+      // Async worktree creation — launch happens inside the callback
+      this.launchWithWorktree(id, agentType, projectPath, message);
+    } else {
+      this.launchInDirectory(id, agentType, projectPath, message);
+    }
+
+    return id;
+  }
+
+  private async launchWithWorktree(
+    id: string, agentType: AgentType, projectPath: string, message?: string,
+  ): Promise<void> {
+    const dirName = projectPath.split('/').filter(Boolean).pop() || 'proj';
+    const ts = Date.now().toString(36).slice(-4); // short 4-char timestamp
+    const branch = `agentdeck/${agentType}-${dirName}-${ts}`;
+    const worktreePath = `${projectPath}/.agentdeck/worktrees/${agentType}-${dirName}-${ts}`;
+
+    try {
+      // Create worktree directory parent
+      await execFileAsync('mkdir', ['-p', `${projectPath}/.agentdeck/worktrees`]);
+      // Create worktree with a new branch
+      await execFileAsync('git', ['worktree', 'add', '-b', branch, worktreePath], { cwd: projectPath });
+      this.log.appendLine(`[WORKTREE ${id}] Created: ${worktreePath} branch=${branch}`);
+
+      this.launchInDirectory(id, agentType, worktreePath, message, worktreePath, branch);
+    } catch (err: any) {
+      this.log.appendLine(`[WORKTREE ${id}] Failed: ${err.message} — falling back to main tree`);
+      this.launchInDirectory(id, agentType, projectPath, message);
+    }
+  }
+
+  private launchInDirectory(
+    id: string, agentType: AgentType, cwd: string, message?: string,
+    worktreePath?: string, worktreeBranch?: string,
+  ): void {
     const cmd = agentCommand(agentType);
 
     // Build args — launch in interactive mode, optionally with an initial message
@@ -138,37 +184,38 @@ export class AgentManager extends EventEmitter {
       if (agentType === 'aider') {
         args.push('--message', message);
       }
-      // For claude and others: send message after launch via sendText
     }
 
-    // Generate short name from project path
-    const dirName = projectPath.split('/').filter(Boolean).pop() || agentType;
+    // Generate short name from project path (use original path, not worktree)
+    const dirName = cwd.split('/').filter(Boolean).pop() || agentType;
 
-    // Open a normal shell terminal, then send the agent command into it
+    const terminalName = worktreeBranch
+      ? `AgentDeck: ${agentType} (${dirName}) [${worktreeBranch}]`
+      : `AgentDeck: ${agentType} (${dirName})`;
+
     const terminal = vscode.window.createTerminal({
-      name: `AgentDeck: ${agentType} (${dirName})`,
-      cwd: projectPath,
+      name: terminalName,
+      cwd,
     });
 
     terminal.show();
 
-    // Build the full command string and send it to the shell
     const fullCmd = [cmd, ...args].map(a => a.includes(' ') ? `"${a}"` : a).join(' ');
     terminal.sendText(fullCmd);
 
-    // If there's an initial message, send it after a short delay to let the agent start
     if (message && agentType !== 'aider') {
       setTimeout(() => {
         terminal.sendText(message);
       }, 3000);
     }
 
-    const agent = this.createManagedAgent(id, agentType, terminal, projectPath);
+    const agent = this.createManagedAgent(id, agentType, terminal, cwd);
+    agent.worktreePath = worktreePath;
+    agent.worktreeBranch = worktreeBranch;
     this.agents.set(id, agent);
     this.terminalToAgent.set(terminal, id);
-    this.log.appendLine(`[LAUNCH ${id}] agent=${agentType} cmd="${fullCmd}" cwd=${projectPath}`);
+    this.log.appendLine(`[LAUNCH ${id}] agent=${agentType} cmd="${fullCmd}" cwd=${cwd}${worktreeBranch ? ` worktree=${worktreeBranch}` : ''}`);
     this.emitStateChange();
-    return id;
   }
 
   approve(agentId: string): boolean {
@@ -232,6 +279,17 @@ export class AgentManager extends EventEmitter {
     if (agent) {
       agent.terminal.show();
     }
+  }
+
+  /** Send a text message to an agent's terminal (for skills / custom prompts) */
+  sendMessage(agentId: string, text: string): boolean {
+    const agent = this.agents.get(agentId);
+    if (!agent) return false;
+    agent.terminal.show();
+    agent.terminal.sendText(text);
+    agent.status = 'working';
+    this.emitStateChange();
+    return true;
   }
 
   getTerminalBuffer(agentId: string): string {

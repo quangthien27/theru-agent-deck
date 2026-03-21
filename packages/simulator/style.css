@@ -106,6 +106,12 @@ body {
   margin-top: 6px;
 }
 
+.lcd-btn .agent-branch {
+  font-size: 9px;
+  color: rgba(255, 255, 255, 0.45);
+  margin-top: 2px;
+}
+
 .lcd-btn .agent-type {
   position: absolute;
   bottom: 4px;

@@ -1,6 +1,7 @@
 namespace Loupedeck.AgentDeckPlugin
 {
     using System;
+    using Loupedeck.AgentDeckPlugin.Folders;
     using Loupedeck.AgentDeckPlugin.Models;
     using Loupedeck.AgentDeckPlugin.Services;
 
@@ -11,6 +12,7 @@ namespace Loupedeck.AgentDeckPlugin
 
         internal PluginState State { get; private set; } = new PluginState();
         internal BridgeClient BridgeClient { get; private set; }
+        internal AgentDashboardFolder ActiveFolder { get; set; }
 
         private BridgeLauncher _bridgeLauncher;
 
@@ -43,9 +45,12 @@ namespace Loupedeck.AgentDeckPlugin
             this.BridgeClient.OnStateUpdate += (state) =>
             {
                 var selectedId = this.State.SelectedAgentId;
+                var worktreeEnabled = this.State.WorktreeEnabled;
                 this.State = state;
                 this.State.SelectedAgentId = selectedId;
+                this.State.WorktreeEnabled = worktreeEnabled;
                 this.RefreshAll();
+                this.NotifyDashboardFolders();
             };
 
             this.BridgeClient.OnAgentEvent += (agentId, eventType) =>
@@ -54,10 +59,19 @@ namespace Loupedeck.AgentDeckPlugin
                 // TODO: trigger haptics based on eventType
             };
 
+            this.BridgeClient.OnSettingsUpdate += (worktreeEnabled) =>
+            {
+                this.State.WorktreeEnabled = worktreeEnabled;
+                this.RefreshAll();
+                this.NotifyDashboardFolders();
+            };
+
             this.BridgeClient.OnConnected += () =>
             {
                 this.State.Phase = PluginPhase.Connected;
                 this.RefreshAll();
+                // Request current settings
+                _ = this.BridgeClient.SendGetSettings();
             };
 
             this.BridgeClient.OnDisconnected += () =>
@@ -83,6 +97,11 @@ namespace Loupedeck.AgentDeckPlugin
             this.OnPluginStatusChanged(
                 Loupedeck.PluginStatus.Normal,
                 this.State.Phase == PluginPhase.Connected ? "Connected" : "Disconnected");
+        }
+
+        private void NotifyDashboardFolders()
+        {
+            this.ActiveFolder?.OnStateChanged();
         }
     }
 }

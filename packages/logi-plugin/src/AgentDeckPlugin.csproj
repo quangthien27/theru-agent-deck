@@ -30,6 +30,11 @@
     </Reference>
   </ItemGroup>
 
+  <ItemGroup>
+    <EmbeddedResource Include="Resources\Icons\*.png" />
+    <EmbeddedResource Include="Resources\Lucide\*.png" />
+  </ItemGroup>
+
   <Target Name="CopyPackage" AfterTargets="PostBuildEvent">
     <Message Text="📦 Copying package files..." Importance="High" />
     <ItemGroup>

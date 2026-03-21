@@ -47,7 +47,7 @@ No external dependencies — no tmux, no Agent Deck binary, no Bridge process. T
 |---|---|
 | Spawn agents | `vscode.window.createTerminal({ shellPath: 'claude' })` |
 | Send input (approve/reject) | `terminal.sendText('y')` |
-| Read terminal output | `Pseudoterminal` API — intercept all output |
+| Read terminal output | `terminalDataWriteEvent` proposed API — intercept all output |
 | Status detection | Parse output patterns (same logic Agent Deck used) |
 | Multi-agent support | Multiple VS Code terminals, tracked in state |
 | Serve Logi Plugin | Built-in WebSocket server on `:9999` |
@@ -104,7 +104,7 @@ The extension parses terminal output to detect status. Patterns per agent type:
 
 When heuristic pattern matching is uncertain (falls through to `currentStatus`), an optional local Ollama model provides a second opinion. Disabled by default — zero cloud dependency, no API costs.
 
-**Flow**: `detectStatus()` returns `{ status, confident }`. When `confident: false` and Ollama is enabled, `ai-classifier.ts` fires an async classification (non-blocking). If the AI disagrees, it updates the status.
+**Flow**: `detectStatus()` returns `{ status, confidence }` (0.0–1.0). When `confidence < 0.6` and Ollama is enabled, `ai-classifier.ts` fires an async classification (non-blocking, requires ≥100 chars buffer growth since last query). If the AI disagrees, it updates the status.
 
 **Settings** (VS Code):
 - `agentdeck.ai.enabled` — `false` by default
@@ -122,63 +122,73 @@ The extension is the central hub — it manages agents, serves the Logi Plugin, 
 | Module | Purpose |
 |---|---|
 | `extension.ts` | Activation, lifecycle, wires everything together |
-| `agent-manager.ts` | Spawn/kill agent processes via VS Code terminals |
+| `agent-manager.ts` | Spawn/kill agent processes via VS Code terminals, terminal I/O |
 | `status-parser.ts` | Parse terminal output to detect agent status (returns `DetectionResult` with confidence) |
 | `ai-classifier.ts` | Optional Ollama-based AI fallback for uncertain status detection |
 | `ws-server.ts` | WebSocket server on `:9999` for Logi Plugin + simulator |
 | `sidebar-provider.ts` | TreeDataProvider for agent list in sidebar |
-| `terminal-manager.ts` | Creates and tracks VS Code terminal instances |
-| `diff-viewer.ts` | Opens native diff editor for approval review |
+| `simulator-webview.ts` | Opens simulator as VS Code webview panel |
+| `protocol.ts` | Shared TypeScript types for agent sessions, commands, events |
 | `commands.ts` | Command palette: approve, reject, new agent, kill |
+
+**Not yet implemented:**
+| `diff-viewer.ts` | _(planned)_ Native diff editor for approval review |
 
 ### Agent Lifecycle
 
 ```
-1. User triggers "New Agent" (console NEW button or command palette)
-2. Extension receives agent type + project path
-3. Extension spawns: vscode.window.createTerminal({
+Launch flow (via command palette, sidebar, or console NEW button):
+1. Extension receives agent type + project path
+2. Extension spawns: vscode.window.createTerminal({
      name: 'AgentDeck: claude',
      shellPath: 'claude',
-     shellArgs: ['-m', 'user message'],
      cwd: '/path/to/project'
    })
-4. Extension wraps terminal with Pseudoterminal to intercept output
-5. Status parser monitors output → updates agent state
-6. State broadcast to Logi Plugin via WebSocket
-7. Logi Plugin updates LCD tiles
-8. When agent needs approval → tile turns yellow, haptic buzz
-9. User taps YES on console → extension sends 'y' to terminal
-10. Agent continues → tile turns green
+3. terminalDataWriteEvent captures all output → status parser
+4. State broadcast to Logi Plugin via WebSocket
+5. Logi Plugin updates LCD tiles
+6. When agent needs approval → tile turns yellow, haptic buzz
+7. User taps YES on console → extension sends 'y' to terminal
+8. Agent continues → tile turns green
+
+Auto-attach flow (user launches agent manually in any terminal):
+1. User opens terminal, types `claude` or `aider` etc.
+2. terminalDataWriteEvent captures output from untracked terminal
+3. Agent type auto-detected from output patterns (shell command + banner text)
+4. Terminal promoted to managed agent (same lifecycle from step 3 above)
 ```
 
-### Terminal I/O via Pseudoterminal
+### Terminal I/O via Proposed API
 
-The extension uses VS Code's `Pseudoterminal` API to intercept all terminal output:
+The extension uses VS Code's proposed `terminalDataWriteEvent` API to intercept terminal output without custom Pseudoterminals. Agents run in native VS Code terminals:
 
 ```typescript
-const pty: vscode.Pseudoterminal = {
-  onDidWrite: writeEmitter.event,  // Output to VS Code terminal UI
-  open: () => { /* spawn child process */ },
-  close: () => { /* kill process */ },
-  handleInput: (data) => { /* forward to child process stdin */ },
-};
-
-// All output passes through → we can parse for status patterns
-childProcess.stdout.on('data', (chunk) => {
-  const text = chunk.toString();
-  statusParser.feed(agentId, text);  // Parse for status
-  writeEmitter.fire(text);           // Forward to terminal UI
+// Capture output from all terminals
+vscode.window.onDidWriteTerminalData((e) => {
+  const agentId = this.terminalToAgent.get(e.terminal);
+  if (agentId) {
+    agent.outputBuffer += e.data;         // Buffer for status parsing
+    detectStatus(agent.outputBuffer, ...); // Parse for status
+  } else {
+    this.tryAutoAttach(e.terminal, e.data); // Auto-detect agent type
+  }
 });
+
+// Send input (approve/reject)
+terminal.sendText('y');
 ```
+
+Note: `terminalDataWriteEvent` is a proposed API — requires `"enabledApiProposals": ["terminalDataWriteEvent"]` in package.json and the `.d.ts` declaration file.
 
 ### Features
 
 1. **Sidebar: Agent List** — TreeView showing all agents with live status icons
 2. **Integrated Terminal** — Each agent runs in a VS Code terminal with full I/O
-3. **Diff Viewer** — When agent is waiting, shows pending changes via `vscode.diff`
-4. **Commands** — Approve, reject, pause, kill, new agent (command palette + sidebar buttons)
+3. **Diff Viewer** — _(not yet implemented)_ Will show pending changes via `vscode.diff` when agent is waiting
+4. **Commands** — Approve, reject, kill, new agent, show terminal, attach (command palette + sidebar buttons)
 5. **WebSocket Server** — Serves Logi Plugin and simulator on `:9999`
 6. **Logi Plugin Integration** — Receives commands, sends state updates and focus requests
+7. **Auto-Attach** — Detects manually launched agents in any terminal and promotes to managed
 
 ## Logi Plugin Architecture
 
@@ -326,62 +336,70 @@ interface OpenTerminal {
 ```
 agentdeck/
 ├── CLAUDE.md
-├── README.md
 ├── packages/
 │   ├── logi-plugin/              # Logi Actions Plugin (C#)
 │   │   ├── AgentDeckPlugin.sln
 │   │   └── src/
 │   │       ├── AgentDeckPlugin.cs
 │   │       ├── AgentDeckPlugin.csproj
-│   │       ├── Folders/
-│   │       │   └── AgentDashboardFolder.cs    # Dynamic Folder (main UI)
-│   │       ├── Commands/
-│   │       │   ├── ApproveCommand.cs          # For Actions Ring
-│   │       │   ├── RejectCommand.cs
-│   │       │   ├── NextWaitingCommand.cs
-│   │       │   ├── NewAgentCommand.cs
-│   │       │   └── OpenTerminalCommand.cs
 │   │       ├── Adjustments/
-│   │       │   └── AgentScrollAdjustment.cs
+│   │       │   ├── DialAdjustment.cs
+│   │       │   └── RollerAdjustment.cs
+│   │       ├── Commands/
+│   │       │   ├── AgentSlotCommand.cs        # Agent tile tap handler
+│   │       │   ├── CustomCommand.cs           # Custom action button
+│   │       │   ├── NewAgentCommand.cs         # NEW button
+│   │       │   └── StatusCommand.cs           # Status overview tile
 │   │       ├── Services/
-│   │       │   └── BridgeClient.cs            # WS client → Extension :9999
+│   │       │   ├── BridgeClient.cs            # WS client → Extension :9999
+│   │       │   ├── BridgeLauncher.cs          # Starts/manages bridge connection
+│   │       │   └── DependencyChecker.cs       # Verifies runtime dependencies
 │   │       ├── Models/
 │   │       │   ├── AgentSession.cs
 │   │       │   └── PluginState.cs
-│   │       ├── Helpers/
-│   │       │   ├── PluginLog.cs
-│   │       │   └── PluginResources.cs
-│   │       └── package/
-│   │           └── metadata/
-│   │               └── LoupedeckPackage.yaml
+│   │       └── Helpers/
+│   │           ├── PluginLog.cs
+│   │           └── PluginResources.cs
+│   │       # NOT YET IMPLEMENTED:
+│   │       # ├── Folders/
+│   │       # │   └── AgentDashboardFolder.cs  # Dynamic Folder (main UI)
+│   │       # ├── Commands/
+│   │       # │   ├── ApproveCommand.cs        # For Actions Ring
+│   │       # │   ├── RejectCommand.cs
+│   │       # │   ├── NextWaitingCommand.cs
+│   │       # │   ├── KillAgentCommand.cs
+│   │       # │   └── OpenTerminalCommand.cs
+│   │       # └── package/metadata/LoupedeckPackage.yaml  # Default profile
 │   │
 │   ├── vscode-extension/         # VS Code Extension (TypeScript)
 │   │   ├── package.json          # Extension manifest + contributes
 │   │   ├── tsconfig.json
 │   │   └── src/
 │   │       ├── extension.ts          # Activation, lifecycle
-│   │       ├── agent-manager.ts      # Spawn/kill agents in VS Code terminals
+│   │       ├── agent-manager.ts      # Spawn/kill agents, terminal I/O
 │   │       ├── status-parser.ts      # Parse terminal output for status
 │   │       ├── ai-classifier.ts      # Optional Ollama AI status classifier
+│   │       ├── protocol.ts           # Shared types (AgentSession, commands, events)
 │   │       ├── ws-server.ts          # WebSocket server :9999
 │   │       ├── sidebar-provider.ts   # TreeDataProvider for agent list
-│   │       ├── terminal-manager.ts   # VS Code terminal instances
-│   │       ├── diff-viewer.ts        # Native diff editor for approvals
+│   │       ├── simulator-webview.ts  # Opens simulator as VS Code webview
 │   │       └── commands.ts           # Approve, reject, new agent, etc.
+│   │       # NOT YET IMPLEMENTED:
+│   │       # └── diff-viewer.ts      # Native diff editor for approvals
+│   │
+│   ├── bridge/                   # (legacy — may be removed)
 │   │
 │   └── simulator/                # Web Simulator (dev/testing)
 │       ├── package.json
 │       ├── serve.ts
 │       ├── index.html
 │       ├── style.css
-│       └── simulator.js
+│       ├── simulator.js
+│       └── icons/
 │
-├── scripts/
-│   └── build-plugin.sh
-│
-└── .github/
-    └── workflows/
-        └── build.yml
+└── ref/                          # Reference projects for research
+    ├── agent-of-empires-main/    # Hooks + worktree patterns
+    └── agent-deck/               # Earlier prototype
 ```
 
 ## Console ↔ VS Code Integration Flow
@@ -419,11 +437,27 @@ npm run watch        # Watch mode
 ### Logi Plugin
 
 ```bash
-cd packages/logi-plugin
-dotnet build         # Build plugin DLL
-dotnet test          # Run tests
+cd packages/logi-plugin/src    # Build from src/ where .csproj lives
+dotnet build -c Debug           # Build plugin DLL
 # logiplugintool pack → produces .lplug4
 ```
+
+**Note:** dotnet is installed via Homebrew at `/opt/homebrew/Cellar/dotnet@8/8.0.124/bin/dotnet` but not in PATH. Either add it to PATH or use the full path. The `obj/` directory at `logi-plugin/` (not `logi-plugin/src/`) can cause duplicate assembly attribute errors — delete it if that happens. Post-build auto-creates `.link` file and sends reload to Logi Plugin Service. After rebuild, run `pkill -f LogiPluginService` to force reload (it auto-restarts).
+
+**Logi Plugin SDK Lessons Learned:**
+- A `ClientApplication` subclass is **required** even when `HasNoApplication = true` — without it the plugin fails to load with `'Loupedeck.ClientApplication' class not found`.
+- `PluginDynamicFolder` with `NavigationArea.None`: the system still reserves button position 0 for Back. Use `NavigateUpActionName` as the first item in `GetButtonPressActionNames` and control positions 1-8 (8 usable buttons on MX Creative Console).
+- **Image refresh**: `ButtonActionNamesChanged()` only re-renders if the action names actually change. To force full tile refresh when switching views, include a counter/epoch in the action parameter names (e.g. `{view}_{epoch}_{pos}`) so each `Refresh()` produces different names.
+- `GetCommandDisplayName` must return `""` to hide the action parameter text from showing on the LCD tile.
+- `Activate()`/`Deactivate()` return `Boolean` (not `void`).
+- Plugin logs: `~/Library/Application Support/Logi/LogiPluginService/Logs/plugin_logs/AgentDeck.log`
+- If plugin is added to disabled list after a crash, restart LogiPluginService to clear it.
+- **Bitmap resolution**: MX Creative Console requests `PluginImageSize.Width116` (116x116 pixels). Use `(Int32)imageSize` to get the actual pixel value. Never hardcode 80 — renders at wrong size and gets upscaled/blurred. All embedded icon PNGs should be 116x116 to match.
+- **`PluginResources.ReadImage` uses suffix matching** — `ReadImage("x.png")` will match `codex.png`. Prefix icon filenames to avoid collisions (e.g. `icon-x.png` instead of `x.png`).
+- **Lucide icons**: Embedded as white-on-transparent PNGs in `Resources/Lucide/`. Downloaded as SVGs from `unpkg.com/lucide-static@latest/icons/{name}.svg`, converted to 40x40 white PNGs via Swift/AppKit (replace `currentColor` with `#FFFFFF` in SVG before rendering). Rendered via `BitmapBuilder.DrawImage()` — much sharper than Unicode chars on LCD.
+- **Agent icons**: PNG files in `Resources/Icons/` (claude, gemini, aider, opencode from simulator, codex provided separately). Codex only has SVG in simulator — needs a real PNG.
+- **Plugin reload**: `open loupedeck:plugin/AgentDeck/reload` triggers hot reload without killing the service. If service isn't running, start it with `open /Applications/Utilities/LogiPluginService.app`. `pkill -f LogiPluginService` kills it but it does NOT auto-restart — must be started manually.
+- **Tile vertical alignment**: Use percentage-based zones (top 55-60% for icon, bottom 35-40% for label) with `DrawText` bounding boxes for centering. All tile types (Ctrl, Status, Info) must use identical zones to align across a row.
 
 ### Simulator
 
@@ -434,26 +468,37 @@ bun dev              # http://localhost:8888
 
 ## Build Phase Deliverables
 
-### Required
-- [ ] VS Code Extension: Agent manager (spawn/kill via terminals)
-- [ ] VS Code Extension: Status parser (terminal output → status)
-- [ ] VS Code Extension: WebSocket server (:9999)
-- [ ] VS Code Extension: Sidebar agent list with live status
-- [ ] VS Code Extension: Integrated terminal per agent
-- [ ] VS Code Extension: Diff viewer for approvals
-- [ ] VS Code Extension: Commands (approve, reject, new, kill)
-- [ ] VS Code Extension: Responds to FocusAgent from Logi plugin
-- [ ] Logi Plugin: Dynamic Folder with agent status tiles
-- [ ] Logi Plugin: Approve/reject flow via folder buttons
-- [ ] Logi Plugin: NEW agent flow (agent type → project picker)
-- [ ] Logi Plugin: Actions Ring commands (8 quick actions)
-- [ ] Logi Plugin: Haptic notifications on MX Master 4
-- [ ] Logi Plugin: Default profile (pre-assigns folder to button)
-- [x] Simulator: Web-based console testing
+### Required — VS Code Extension
+- [x] Agent manager (spawn/kill via terminals, auto-attach)
+- [x] Status parser (terminal output → status, 5 agents + generic)
+- [x] AI status classifier (optional Ollama fallback for uncertain detection)
+- [x] WebSocket server (:9999)
+- [x] Sidebar agent list with live status
+- [x] Integrated terminal per agent
+- [x] Commands (approve, reject, new, kill, show terminal, attach)
+- [x] Responds to FocusAgent from Logi plugin
+- [x] Simulator webview panel
+- [x] Diff viewer for approvals — `diff-viewer.ts` with git diff integration + dial scrubbing (nav_left/nav_right)
+
+### Required — Logi Plugin
+- [x] Plugin scaffolding (AgentDeckPlugin.cs, models, services)
+- [x] BridgeClient (WebSocket connection to extension :9999)
+- [x] Basic commands (AgentSlot, NewAgent, Status, Custom)
+- [x] Dial + roller adjustments
+- [x] Dynamic Folder with agent status tiles — `AgentDashboardFolder.cs` takes over 9 LCD buttons (dashboard/approval/skills/new-agent/menu views)
+- [x] Approve/reject flow via folder buttons — CONFIRM/CANCEL in approval view
+- [x] NEW agent flow with agent type picker — 5 agent types + WORKTREE toggle in new-agent view
+- [ ] Actions Ring commands (8 quick actions) — only 4 commands exist, missing: Approve, Reject, NextWaiting, Kill, OpenTerminal
+- [ ] Haptic notifications on MX Master 4 — no haptic code
+- [ ] Default profile (.lp5 pre-assigns folder to button)
+
+### Required — Simulator
+- [x] Web-based console testing (dashboard, approval flow, cancel, keyboard shortcuts)
 
 ### Nice to Have
 - [ ] Cost tracking display
-- [ ] Git worktree display
+- [x] Git worktree isolation — per-agent worktrees with toggle on NEW grid, auto-generated branches
+- [x] Agent skills page — Commit, Fix, Test, Refactor, Review, Explain + Custom (idle/error agents)
 - [ ] Session forking
 - [ ] Windows support
 
@@ -478,9 +523,74 @@ The current terminal output parsing approach (status-parser.ts) is brittle — T
 
 Priority: Claude Code hooks (highest impact — most complex detector, most used agent).
 
+### Git Worktree Isolation for Multi-Agent
+
+When multiple agents work on the same repo, they clobber each other's files. Git worktrees solve this — each agent gets its own working directory and branch, sharing the same `.git` object database (lightweight).
+
+**Recommended UX**: Don't auto-worktree by default. Instead, prompt when a 2nd agent is launched on the same repo: "Multiple agents on same repo. Launch in worktree?" with an "Always" option. Add `agentdeck.worktree.enabled` setting (default `false`).
+
+**Implementation**:
+- On launch: `git worktree add .claude/worktrees/<agent-id> -b worktree-<agent-id>` → set terminal `cwd` to worktree path
+- On agent exit: clean worktree → auto-remove. Dirty → keep, notify user
+- Protocol: add `worktreePath?` and `worktreeBranch?` to `AgentSession`
+- Sidebar/keypad: show branch name per agent
+
+Reference: agent-of-empires uses worktrees (disabled by default, opt-in). Claude Code has built-in `--worktree` flag.
+
+### Agent Skills Page (Idle/Error Actions)
+
+Inspired by [Conductor](https://devpost.com/software/conductor-tpdnkj)'s skill-based workflow. When tapping an agent tile on the dashboard and the agent is **idle** or **error**, navigate to a skills page instead of just focusing the terminal:
+
+```
+Tap idle/error agent tile → Skills Page:
+┌─────────┬─────────┬─────────┐
+│  FIX    │ REFACT  │  TEST   │  Skill tiles — send command to agent
+│  🔧    │  ♻️    │  ✓     │
+├─────────┼─────────┼─────────┤
+│  DOCS   │ REVIEW  │ EXPLAIN │
+│  📝    │  👁    │  💡    │
+├─────────┼─────────┼─────────┤
+│ TERMINAL│ CUSTOM  │  BACK   │  Controls
+│  >_    │   ?    │         │
+└─────────┴─────────┴─────────┘
+```
+
+- **Idle agent**: Skills send a message to the agent's terminal (e.g. "fix the failing tests", "refactor this file")
+- **Error agent**: Skills can retry, explain error, or fix the issue
+- **Waiting agent**: Already has its own approval page (CONFIRM/CANCEL/nav)
+- **Working agent**: Tap → focus terminal only (no skills page, agent is busy)
+- **CUSTOM**: Opens VS Code input box for free-form message
+
+This gives the hardware a Conductor-like skill workflow while maintaining our multi-agent dashboard as the primary view.
+
+### Diff Scrubbing via Dial
+
+Use the MX Creative Console dial to navigate through an agent's changeset — rotate to switch between changed files, press to toggle navigation mode.
+
+**VS Code APIs**:
+- Git extension API (`vscode.extensions.getExtension('vscode.git')`) — list all changed files
+- `git.openChange` — open a specific file's diff view
+- `workbench.action.editor.nextChange` / `previousChange` — navigate hunks within a diff
+- `workbench.action.nextEditor` / `previousEditor` — switch between open diff tabs
+
+**Design**:
+- **Dial rotation** → cycle through git changed files (opens each file's diff view)
+- **Dial press** → toggle between file-level (rotate = next file) and hunk-level (rotate = next hunk) navigation
+- **LCD feedback** → show current file name + position (e.g., `3/7 files` or `hunk 2/5`)
+- **MX Master roller** → already scrolls within current diff natively (no code needed)
+
+**Implementation**:
+- Extension tracks changed files via Git extension API: `repo.state.workingTreeChanges` + `repo.state.indexChanges`
+- On dial rotate: `vscode.commands.executeCommand('git.openChange', changedFiles[index].uri)`
+- On dial press: toggle `scrubMode` between `'file'` and `'hunk'`
+- In hunk mode: `vscode.commands.executeCommand('workbench.action.editor.nextChange')`
+- Broadcast current position to Logi Plugin for LCD tile update
+
+**Scope**: Per-agent — each agent has its own worktree/branch, so changed files are scoped to that agent's work. Without worktrees, shows all repo changes (still useful for single-agent).
+
 ### Reference: Competitor Submissions
 
-- [Conductor](https://devpost.com/software/conductor-tpdnkj) — similar multi-agent management concept
+- [Conductor](https://devpost.com/software/conductor-tpdnkj) — single-agent, skill-based workflow with diff scrubbing via dial and checkpoint timeline. Uses same hardware (MX Creative Console). No multi-agent support. Concept phase (no working prototype linked).
 
 ## Resources
 
@@ -488,4 +598,5 @@ Priority: Claude Code hooks (highest impact — most complex detector, most used
 - [Actions SDK C# Plugin Development](https://logitech.github.io/actions-sdk-docs/csharp/plugin-development/introduction/)
 - [Actions SDK Plugin Features](https://logitech.github.io/actions-sdk-docs/csharp/plugin-features/)
 - [VS Code Extension API](https://code.visualstudio.com/api)
-- [VS Code Pseudoterminal API](https://code.visualstudio.com/api/references/vscode-api#Pseudoterminal)
+- [VS Code Terminal API](https://code.visualstudio.com/api/references/vscode-api#Terminal)
+- [VS Code Proposed APIs](https://code.visualstudio.com/api/advanced-topics/using-proposed-api) (terminalDataWriteEvent)

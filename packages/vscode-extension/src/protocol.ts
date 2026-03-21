@@ -18,6 +18,8 @@ export interface AgentSession {
   projectPath: string;
   createdAt: string;
   approval?: ApprovalRequest;
+  worktreePath?: string;
+  worktreeBranch?: string;
 }
 
 export type AgentStatus = 'idle' | 'working' | 'waiting' | 'error' | 'offline';
@@ -70,8 +72,49 @@ export interface OpenTerminal {
   agentId: string;
 }
 
-export type ClientMessage = AgentCommand | LaunchAgent | OpenTerminal;
-export type ServerMessage = StateUpdate | AgentEvent | FocusAgent;
+export interface ToggleWorktree {
+  type: 'toggle_worktree';
+}
+
+export interface GetSettings {
+  type: 'get_settings';
+}
+
+export const AGENT_SKILLS = [
+  { id: 'commit',   label: 'Commit',   icon: '⏎', prompt: '/commit' },
+  { id: 'fix',      label: 'Fix',      icon: '🔧', prompt: 'fix the failing tests and errors' },
+  { id: 'test',     label: 'Test',     icon: '✓', prompt: 'run the tests and fix any failures' },
+  { id: 'refactor', label: 'Refactor', icon: '♻', prompt: 'refactor the recent changes for clarity' },
+  { id: 'review',   label: 'Review',   icon: '👁', prompt: 'review the recent changes and suggest improvements' },
+  { id: 'explain',  label: 'Explain',  icon: '💡', prompt: 'explain what the recent changes do' },
+] as const;
+
+export type SkillId = typeof AGENT_SKILLS[number]['id'];
+
+export interface SkillCommand {
+  type: 'skill';
+  agentId: string;
+  skillId: string;       // one of AGENT_SKILLS[].id or 'custom'
+  customPrompt?: string; // only for skillId === 'custom'
+}
+
+export type ClientMessage = AgentCommand | LaunchAgent | OpenTerminal | ToggleWorktree | GetSettings | SkillCommand;
+// Extension → Client (diff scrubbing position feedback)
+export interface DiffPosition {
+  type: 'diff_position';
+  agentId: string;
+  fileIndex: number;
+  fileCount: number;
+  fileName: string;
+  mode: 'file' | 'hunk';
+}
+
+export interface SettingsUpdate {
+  type: 'settings';
+  worktreeEnabled: boolean;
+}
+
+export type ServerMessage = StateUpdate | AgentEvent | FocusAgent | DiffPosition | SettingsUpdate;
 
 export const SUPPORTED_AGENTS = ['claude', 'gemini', 'aider', 'codex', 'opencode'] as const;
 export type AgentType = typeof SUPPORTED_AGENTS[number];

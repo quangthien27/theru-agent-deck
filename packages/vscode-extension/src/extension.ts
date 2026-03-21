@@ -4,7 +4,9 @@ import { WSServer } from './ws-server';
 import { AgentSidebarProvider } from './sidebar-provider';
 import { registerCommands } from './commands';
 import { OllamaClassifier } from './ai-classifier';
+import { DiffViewer } from './diff-viewer';
 import type { ClientMessage, AgentStatus } from './protocol';
+import { AGENT_SKILLS } from './protocol';
 
 const WS_PORT = 9999;
 
@@ -12,6 +14,7 @@ let agentManager: AgentManager;
 let wsServer: WSServer;
 let sidebarProvider: AgentSidebarProvider;
 let statusBarItem: vscode.StatusBarItem;
+let diffViewer: DiffViewer;
 
 export function activate(context: vscode.ExtensionContext) {
   const sessionsLog = vscode.window.createOutputChannel('AgentDeck Sessions');
@@ -85,8 +88,24 @@ export function activate(context: vscode.ExtensionContext) {
     }
   });
 
+  // ── Diff Viewer ──────────────────────────────────────────
+  diffViewer = new DiffViewer(sessionsLog, (pos) => {
+    wsServer.broadcast(pos);
+  });
+
+  // Clean up diff state when agent is killed
+  agentManager.on('stateChange', (agents) => {
+    // Remove diff state for agents that no longer exist
+    const agentIds = new Set(agents.map((a: { id: string }) => a.id));
+    for (const id of diffViewer.getActiveAgentIds()) {
+      if (!agentIds.has(id)) {
+        diffViewer.remove(id);
+      }
+    }
+  });
+
   // ── Commands ───────────────────────────────────────────
-  registerCommands(context, agentManager);
+  registerCommands(context, agentManager, diffViewer);
 
   // ── Cleanup ────────────────────────────────────────────
   context.subscriptions.push(
@@ -135,10 +154,18 @@ function handleClientMessage(msg: ClientMessage): void {
           agentManager.navigate(msg.agentId, 'down');
           break;
         case 'nav_left':
-          agentManager.navigate(msg.agentId, 'left');
+          if (diffViewer.isActive(msg.agentId)) {
+            diffViewer.navigate(msg.agentId, 'prev');
+          } else {
+            agentManager.navigate(msg.agentId, 'left');
+          }
           break;
         case 'nav_right':
-          agentManager.navigate(msg.agentId, 'right');
+          if (diffViewer.isActive(msg.agentId)) {
+            diffViewer.navigate(msg.agentId, 'next');
+          } else {
+            agentManager.navigate(msg.agentId, 'right');
+          }
           break;
       }
       break;
@@ -167,6 +194,39 @@ function handleClientMessage(msg: ClientMessage): void {
         view: 'terminal',
       });
       break;
+
+    case 'toggle_worktree': {
+      const cfg = vscode.workspace.getConfiguration('agentdeck');
+      const current = cfg.get<boolean>('worktree.enabled', true);
+      cfg.update('worktree.enabled', !current, vscode.ConfigurationTarget.Global);
+      wsServer.broadcast({ type: 'settings', worktreeEnabled: !current });
+      break;
+    }
+
+    case 'get_settings': {
+      const worktreeEnabled = vscode.workspace.getConfiguration('agentdeck').get<boolean>('worktree.enabled', true);
+      wsServer.broadcast({ type: 'settings', worktreeEnabled });
+      break;
+    }
+
+    case 'skill': {
+      if (msg.skillId === 'custom') {
+        if (msg.customPrompt) {
+          agentManager.sendMessage(msg.agentId, msg.customPrompt);
+        } else {
+          // Open VS Code input box for custom prompt
+          vscode.window.showInputBox({ prompt: 'Enter message for agent' }).then(text => {
+            if (text) agentManager.sendMessage(msg.agentId, text);
+          });
+        }
+      } else {
+        const skill = AGENT_SKILLS.find(s => s.id === msg.skillId);
+        if (skill) {
+          agentManager.sendMessage(msg.agentId, skill.prompt);
+        }
+      }
+      break;
+    }
   }
 }
 
