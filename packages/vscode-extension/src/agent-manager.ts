@@ -286,7 +286,18 @@ export class AgentManager extends EventEmitter {
     const agent = this.agents.get(agentId);
     if (!agent) return false;
     agent.terminal.show();
-    agent.terminal.sendText(text);
+
+    // TUI agents (gemini, opencode) run in raw mode — typing text + \n in one
+    // call can get swallowed. Send text without newline first, then Enter after
+    // a short delay so the TUI has time to process the input.
+    const tuiAgents = ['gemini', 'opencode', 'codex'];
+    if (tuiAgents.includes(agent.agent)) {
+      agent.terminal.sendText(text, false);
+      setTimeout(() => agent.terminal.sendText('', true), 100);
+    } else {
+      agent.terminal.sendText(text);
+    }
+
     agent.status = 'working';
     this.emitStateChange();
     return true;
@@ -476,6 +487,12 @@ export class AgentManager extends EventEmitter {
         this.aiClassifier.classify(stripped, agent.agent, agentId)
           .then(aiResult => {
             if (aiResult && aiResult.status !== currentStatus) {
+              // Don't let AI demote working → idle (small models misread TUI output).
+              // AI should only promote: working→waiting, idle→waiting, etc.
+              if (currentStatus === 'working' && aiResult.status === 'idle') {
+                this.aiLog!.appendLine(`[AI ${agentId}] IGNORED: ${currentStatus} → ${aiResult.status} (ai-conf: ${aiResult.confidence.toFixed(2)}, heuristic-conf: ${heuristicConf.toFixed(2)})`);
+                return;
+              }
               const a = this.agents.get(agentId);
               if (a && a.status === currentStatus) {
                 const aiPrev = a.status;

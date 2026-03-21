@@ -1,0 +1,11 @@
+{
+  "name": "theru-agent-deck",
+  "private": true,
+  "scripts": {
+    "ext:install": "cd packages/vscode-extension && npm install",
+    "ext:compile": "cd packages/vscode-extension && npm run compile",
+    "ext:watch": "cd packages/vscode-extension && npm run watch",
+    "ext:package": "cd packages/vscode-extension && npm run package",
+    "sim:dev": "cd packages/simulator && bun dev"
+  }
+}
