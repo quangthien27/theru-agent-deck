@@ -149,6 +149,12 @@ function hasClaudeInteractiveUI(content: string): boolean {
 // ── Claude-specific detection ──
 
 function isClaudeBusy(lastLines: string[], recentLower: string): boolean {
+  // If interrupted, agent is waiting for new input — not busy
+  const tail = recentLower.slice(-800);
+  if (tail.includes('interrupted') || tail.includes('what should claude do instead') || tail.includes('whatshouldclaudodoinstead')) {
+    return false;
+  }
+
   // Check explicit busy text
   if (recentLower.includes('ctrl+c to interrterrupt') || recentLower.includes('esc to interrterrupt')) {
     return true;
@@ -187,6 +193,9 @@ function isClaudeWaiting(_lastLines: string[], recentContent: string): boolean {
   // Claude-specific permission dialog patterns
   const claudePrompts = [
     'No, and tell Claude what to do differently',
+    'Interrupted',                // User interrupted agent — waiting for new instruction
+    'What should Claude do instead',
+    'Whatshouldclaudodoinstead',  // TUI-stripped variant (no spaces)
     '│ Do you want',
     '│ Would you like',
     '│ Allow',

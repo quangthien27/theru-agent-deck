@@ -4,6 +4,7 @@
     {
       "type": "npm",
       "script": "compile",
+      "path": "packages/vscode-extension",
       "problemMatcher": "$tsc",
       "group": {
         "kind": "build",
@@ -13,6 +14,7 @@
     {
       "type": "npm",
       "script": "watch",
+      "path": "packages/vscode-extension",
       "problemMatcher": "$tsc-watch",
       "isBackground": true,
       "group": "build"

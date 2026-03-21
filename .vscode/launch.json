@@ -1,0 +1,18 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Run AgentDeck Extension",
+      "type": "extensionHost",
+      "request": "launch",
+      "args": [
+        "--extensionDevelopmentPath=${workspaceFolder}/packages/vscode-extension",
+        "--enable-proposed-api=agentdeck.agentdeck"
+      ],
+      "outFiles": [
+        "${workspaceFolder}/packages/vscode-extension/out/**/*.js"
+      ],
+      "preLaunchTask": "npm: compile - packages/vscode-extension"
+    }
+  ]
+}

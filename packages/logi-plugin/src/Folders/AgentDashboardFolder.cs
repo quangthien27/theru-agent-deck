@@ -208,7 +208,7 @@ namespace Loupedeck.AgentDeckPlugin.Folders
 
         // ══════════════════════════════════════════════════════════
         // APPROVAL
-        //   [Id]  [Sum]  [UP]  [DN]  [NXT]  [BACK]  [CFM]  [CXL]
+        //   [UP]  [CONT]  [PREV]  [DN]  [NXT]  [BACK]  [CFM]  [CXL]
         // ══════════════════════════════════════════════════════════
 
         private void OnApproval(Int32 pos)
@@ -217,9 +217,9 @@ namespace Loupedeck.AgentDeckPlugin.Folders
             if (a == null) { GoBack(); return; }
             switch (pos)
             {
-                case 0: _ = this.Plugin.BridgeClient.SendOpenTerminal(a.Id); break;
-                case 1: break;
-                case 2: _ = this.Plugin.BridgeClient.SendCommand(a.Id, "nav_up"); break;
+                case 0: _ = this.Plugin.BridgeClient.SendCommand(a.Id, "nav_up"); break;
+                case 1: _ = this.Plugin.BridgeClient.SendSkill(a.Id, "custom", "continue"); break;
+                case 2: _ = this.Plugin.BridgeClient.SendCommand(a.Id, "nav_left"); break;
                 case 3: _ = this.Plugin.BridgeClient.SendCommand(a.Id, "nav_down"); break;
                 case 4: _ = this.Plugin.BridgeClient.SendCommand(a.Id, "nav_right"); break;
                 case 5: GoBack(); break;
@@ -230,17 +230,11 @@ namespace Loupedeck.AgentDeckPlugin.Folders
 
         private BitmapImage DrawApproval(Int32 pos, Int32 sz)
         {
-            var a = this.Plugin.State.GetSelectedAgent();
-            var lbl = a != null ? Cap(a.Agent) : "?";
-            var sum = a?.Approval?.Summary ?? "Input needed";
-            var pth = a?.ProjectPath?.Split('/')?.LastOrDefault() ?? "?";
             return pos switch
             {
-                0 => TileInfo(lbl, Trn(pth, 8), new BitmapColor(60, 60, 80), sz),
-                1 => a?.Status == AgentStatus.Waiting
-                    ? TileInfo("INPUT", Trn(sum, 10), new BitmapColor(60, 60, 40), sz)
-                    : TileInfo("...", "Processing", new BitmapColor(40, 50, 40), sz),
-                2 => TileCtrl("chevron-up", "UP", new BitmapColor(50, 50, 60), sz),
+                0 => TileCtrl("chevron-up", "UP", new BitmapColor(50, 50, 60), sz),
+                1 => TileCtrl("play", "CONTINUE", new BitmapColor(45, 120, 90), sz),
+                2 => TileCtrl("chevron-left", "PREV", new BitmapColor(50, 50, 60), sz),
                 3 => TileCtrl("chevron-down", "DOWN", new BitmapColor(50, 50, 60), sz),
                 4 => TileCtrl("chevron-right", "NEXT", new BitmapColor(50, 50, 60), sz),
                 5 => TileCtrl("chevron-left", "BACK", new BitmapColor(50, 50, 50), sz),
@@ -265,7 +259,7 @@ namespace Loupedeck.AgentDeckPlugin.Folders
             {
                 case 5: GoBack(); break;
                 case 6: _ = this.Plugin.BridgeClient.SendSkill(a.Id, Skills[5].id); GoBack(); break;
-                case 7: _ = this.Plugin.BridgeClient.SendSkill(a.Id, "custom"); GoBack(); break;
+                case 7: _ = this.Plugin.BridgeClient.SendCommand(a.Id, "kill"); GoBack(); break;
             }
         }
 
@@ -276,7 +270,7 @@ namespace Loupedeck.AgentDeckPlugin.Folders
             {
                 5 => TileCtrl("chevron-left", "BACK", new BitmapColor(50, 50, 50), sz),
                 6 => TileCtrl(Skills[5].lucide, Skills[5].label, Skills[5].color, sz),
-                7 => TileCtrl("message-circle", "CUSTOM", new BitmapColor(50, 50, 60), sz),
+                7 => TileCtrl("icon-x", "END", new BitmapColor(180, 40, 40), sz),
                 _ => Empty(sz)
             };
         }
@@ -515,25 +509,35 @@ namespace Loupedeck.AgentDeckPlugin.Folders
             using var b = new BitmapBuilder(sz, sz);
             b.Clear(new BitmapColor(40, 50, 60));
 
-            // Same layout math as TileCtrl: icon + gap + label centered as unit
+            // TileCtrl-matching layout with tighter number zone
             var iconSz = sz * 34 / 100;
             var labelH = sz * 18 / 100;
             var gap = sz * 2 / 100;
             var totalH = iconSz + gap + labelH;
             var startY = (sz - totalH) / 2;
 
-            b.DrawText($"{t}", 0, startY, sz, iconSz,
+            // Count number — draw in lower portion of icon zone so it sits close to label
+            b.DrawText($"{t}", 0, startY + iconSz * 20 / 100, sz, iconSz * 80 / 100,
                 new BitmapColor(200, 220, 255), sz / 3);
 
-            var label = "SESSIONS";
-            var pts = new List<String>();
-            if (wk > 0) pts.Add($"{wk}\u25CF");
-            if (w > 0) pts.Add($"{w}\u25D0");
-            if (e > 0) pts.Add($"{e}\u2715");
-            if (pts.Count > 0) label += " " + String.Join(" ", pts);
-
-            b.DrawText(label, 0, startY + iconSz + gap, sz, labelH,
+            // Label
+            var labelY = startY + iconSz + gap;
+            b.DrawText("SESSIONS", 0, labelY, sz, labelH,
                 new BitmapColor(210, 210, 220), sz / 6);
+
+            // Status dots — horizontal row below SESSIONS, in remaining bottom space
+            var dotSz = sz * 6 / 100;
+            var dotGap = sz * 4 / 100;
+            var dotsWidth = dotSz * 3 + dotGap * 2;
+            var dotX = (sz - dotsWidth) / 2;
+            var dotY = labelY + labelH + sz * 3 / 100;
+
+            var gClr = wk > 0 ? new BitmapColor(30, 120, 50) : new BitmapColor(60, 65, 70);
+            var yClr = w > 0 ? new BitmapColor(180, 160, 30) : new BitmapColor(60, 65, 70);
+            var rClr = e > 0 ? new BitmapColor(180, 40, 40) : new BitmapColor(60, 65, 70);
+            b.FillRectangle(dotX, dotY, dotSz, dotSz, gClr);
+            b.FillRectangle(dotX + dotSz + dotGap, dotY, dotSz, dotSz, yClr);
+            b.FillRectangle(dotX + (dotSz + dotGap) * 2, dotY, dotSz, dotSz, rClr);
 
             return b.ToImage();
         }
