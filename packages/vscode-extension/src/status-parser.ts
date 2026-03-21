@@ -177,7 +177,7 @@ function isClaudeBusy(lastLines: string[], recentLower: string): boolean {
   return false;
 }
 
-function isClaudeWaiting(lastLines: string[], recentContent: string): boolean {
+function isClaudeWaiting(_lastLines: string[], recentContent: string): boolean {
   // Only check the tail — stale prompts from answered questions linger in the
   // full buffer. Using the tail ensures we only match the currently active prompt.
   const tail = recentContent.slice(-800);
@@ -256,7 +256,7 @@ function isGeminiBusy(recentLower: string): boolean {
   return true;
 }
 
-function isGeminiWaiting(lastLines: string[], recentContent: string): boolean {
+function isGeminiWaiting(_lastLines: string[], recentContent: string): boolean {
   return matchesCommonPrompts(recentContent);
 }
 
@@ -411,7 +411,7 @@ function isCodexIdle(recentContent: string, lastLines: string[]): boolean {
 
 // ── Aider-specific detection ──
 
-function isAiderWaiting(lastLines: string[], recentContent: string): boolean {
+function isAiderWaiting(_lastLines: string[], recentContent: string): boolean {
   if (matchesAny(recentContent, COMMON_CONFIRM_PROMPTS)) return true;
   return false;
 }
@@ -452,7 +452,7 @@ function isAiderBusy(lastLines: string[], recentLower: string): boolean {
 
 // ── Generic detection ──
 
-function isGenericWaiting(lastLines: string[], recentContent: string): boolean {
+function isGenericWaiting(_lastLines: string[], recentContent: string): boolean {
   return matchesCommonPrompts(recentContent);
 }
 

@@ -23,6 +23,7 @@ namespace Loupedeck.AgentDeckPlugin.Services
 
         public event Action<PluginState> OnStateUpdate;
         public event Action<String, String> OnAgentEvent; // agentId, eventType
+        public event Action<Boolean> OnSettingsUpdate; // worktreeEnabled
         public event Action OnConnected;
         public event Action OnDisconnected;
 
@@ -131,6 +132,11 @@ namespace Loupedeck.AgentDeckPlugin.Services
                         var agentId = doc.RootElement.GetProperty("agentId").GetString();
                         var eventType = doc.RootElement.GetProperty("event").GetString();
                         OnAgentEvent?.Invoke(agentId, eventType);
+                        break;
+
+                    case "settings":
+                        var worktreeEnabled = doc.RootElement.GetProperty("worktreeEnabled").GetBoolean();
+                        OnSettingsUpdate?.Invoke(worktreeEnabled);
                         break;
                 }
             }
@@ -290,6 +296,58 @@ namespace Loupedeck.AgentDeckPlugin.Services
             {
                 PluginLog.Error(ex, "Failed to send open_terminal to bridge");
             }
+        }
+
+        public async Task SendSkill(String agentId, String skillId, String customPrompt = null)
+        {
+            if (_socket?.State != WebSocketState.Open) return;
+
+            var message = customPrompt != null
+                ? new { type = "skill", agentId, skillId, customPrompt }
+                : (Object)new { type = "skill", agentId, skillId };
+
+            var json = JsonSerializer.Serialize(message, _jsonOptions);
+            var bytes = Encoding.UTF8.GetBytes(json);
+
+            try
+            {
+                await _socket.SendAsync(
+                    new ArraySegment<Byte>(bytes), WebSocketMessageType.Text, true,
+                    _cts?.Token ?? CancellationToken.None);
+            }
+            catch (Exception ex) { PluginLog.Error(ex, "Failed to send skill"); }
+        }
+
+        public async Task SendToggleWorktree()
+        {
+            if (_socket?.State != WebSocketState.Open) return;
+
+            var json = JsonSerializer.Serialize(new { type = "toggle_worktree" }, _jsonOptions);
+            var bytes = Encoding.UTF8.GetBytes(json);
+
+            try
+            {
+                await _socket.SendAsync(
+                    new ArraySegment<Byte>(bytes), WebSocketMessageType.Text, true,
+                    _cts?.Token ?? CancellationToken.None);
+            }
+            catch (Exception ex) { PluginLog.Error(ex, "Failed to send toggle_worktree"); }
+        }
+
+        public async Task SendGetSettings()
+        {
+            if (_socket?.State != WebSocketState.Open) return;
+
+            var json = JsonSerializer.Serialize(new { type = "get_settings" }, _jsonOptions);
+            var bytes = Encoding.UTF8.GetBytes(json);
+
+            try
+            {
+                await _socket.SendAsync(
+                    new ArraySegment<Byte>(bytes), WebSocketMessageType.Text, true,
+                    _cts?.Token ?? CancellationToken.None);
+            }
+            catch (Exception ex) { PluginLog.Error(ex, "Failed to send get_settings"); }
         }
 
         public void Dispose()

@@ -8,6 +8,7 @@
 //   dashboard   — agent tiles + NEW / SESSIONS / MENU
 //   new-agent   — 8 agent type tiles + BACK
 //   approval    — context tiles + APPROVE / REJECT / BACK
+//   skills      — 6 skill tiles + TERMINAL / CUSTOM / BACK
 //   menu        — action tiles + PREV / page / NEXT|BACK
 //   status-list — all agents as tiles + BACK
 //
@@ -43,6 +44,16 @@ const MENU_ACTIONS = [
   { id: "refresh-status", label: "Refresh",        icon: "\u21BB", desc: "Force re-check all status", color: "#4488bb" },
 ];
 
+// Agent skills — each maps to a PluginDynamicCommand (draggable in Logi Options+)
+const SKILLS = [
+  { id: "commit",   label: "Commit",   icon: "⏎", color: "#1e7832" },
+  { id: "fix",      label: "Fix",      icon: "🔧", color: "#b4a01e" },
+  { id: "test",     label: "Test",     icon: "✓",  color: "#2d8a4e" },
+  { id: "refactor", label: "Refactor", icon: "♻",  color: "#4488bb" },
+  { id: "review",   label: "Review",   icon: "👁", color: "#8855bb" },
+  { id: "explain",  label: "Explain",  icon: "💡", color: "#d4b030" },
+];
+
 // ── State ──────────────────────────────────────────────────────
 
 let ws = null;
@@ -51,6 +62,7 @@ let state = {
   phase: "disconnected",
   agents: [],
   selectedAgentId: null,
+  worktreeEnabled: true,
 };
 
 // View = current folder page
@@ -80,6 +92,8 @@ function connect() {
     state.phase = "connected";
     updateConnection(true);
     log("Connected to Extension", "connect");
+    // Request current settings
+    send({ type: "get_settings" });
   };
 
   ws.onclose = () => {
@@ -152,6 +166,17 @@ function handleMessage(msg) {
     case "focus":
       log(`Focus: ${msg.agentId} -> ${msg.view}`, "event");
       state.selectedAgentId = msg.agentId;
+      renderAll();
+      break;
+
+    case "diff_position":
+      log(`Diff: ${msg.fileName} (${msg.fileIndex + 1}/${msg.fileCount}) [${msg.mode}]`, "event");
+      updateDiffIndicator(msg);
+      break;
+
+    case "settings":
+      state.worktreeEnabled = msg.worktreeEnabled;
+      log(`Settings: worktree ${msg.worktreeEnabled ? "ON" : "OFF"}`, "state");
       renderAll();
       break;
   }
@@ -300,6 +325,7 @@ function renderKeypad() {
   switch (view) {
     case "new-agent":   renderNewAgentPage();  break;
     case "approval":    renderApprovalPage();  break;
+    case "skills":      renderSkillsPage();    break;
     case "menu":        renderMenuPage();      break;
     case "status-list": renderStatusList();    break;
     default:            renderDashboard();
@@ -328,9 +354,13 @@ function renderDashboard() {
     if (state.selectedAgentId === agent.id) btn.style.borderColor = "#fff";
 
     const _icon = agentIcon(agent.agent);
+    const branchLabel = agent.worktreeBranch
+      ? `<span class="agent-branch">⑂ ${truncate(agent.worktreeBranch.replace("agentdeck/", ""), 8)}</span>`
+      : "";
     btn.innerHTML = `
       <span class="agent-name">${truncate(agent.name, 6)}</span>
       <span class="agent-status">${statusText(agent)}</span>
+      ${branchLabel}
       ${_icon ? `<img class="agent-icon" src="${_icon}" alt="">` : ""}
     `;
 
@@ -340,6 +370,9 @@ function renderDashboard() {
       if (a.status === "waiting") {
         view = "approval";
         log(`${a.name}: needs input \u2014 review in VS Code`);
+      } else if (a.status === "idle" || a.status === "error") {
+        view = "skills";
+        log(`${a.name}: skills \u2014 ${a.status}`);
       } else {
         log(`Focused: ${a.name}`);
       }
@@ -433,17 +466,34 @@ function renderNewAgentPage() {
   btnBack.innerHTML = `<span class="ctrl-label">BACK</span>`;
   btnBack.onclick = goBack;
 
-  // [8-9] empty
-  for (let i = 7; i < 9; i++) {
-    resetBtn(grid.children[i]);
-    grid.children[i].classList.add("empty");
+  // [8] empty
+  resetBtn(grid.children[7]);
+  grid.children[7].classList.add("empty");
+
+  // [9] WORKTREE toggle
+  const btnWorktree = grid.children[8];
+  resetBtn(btnWorktree);
+  btnWorktree.classList.add("ctrl-btn");
+  if (state.worktreeEnabled) {
+    btnWorktree.style.borderColor = "#2d8a4e66";
+    btnWorktree.innerHTML = `<span class="ctrl-icon" style="color:#5cb870">⑂</span><span class="ctrl-label">WORKTREE</span>`;
+  } else {
+    btnWorktree.style.borderColor = "#5a5a5a66";
+    btnWorktree.innerHTML = `<span class="ctrl-icon" style="color:#888">⑂</span><span class="ctrl-label">NO WKTREE</span>`;
   }
+  btnWorktree.onclick = () => {
+    send({ type: "toggle_worktree" });
+    // Optimistic update
+    state.worktreeEnabled = !state.worktreeEnabled;
+    log(`Worktree: ${state.worktreeEnabled ? "ON" : "OFF"}`);
+    renderAll();
+  };
 }
 
 // ── Approval View ───────────────────────────────────────────────
 // Layout:
-//   [Identity]  [Duration]  [Summary]     ← context
-//   [◀ PREV]    [▲ UP/▼ DN] [▶ NEXT]     ← navigation (tabs + options)
+//   [Identity]  [▲ UP]      [Summary]     ← context + up nav
+//   [◀ PREV]    [▼ DOWN]    [▶ NEXT]     ← navigation (tabs + options)
 //   [CONFIRM]   [CANCEL]    [BACK]        ← actions
 
 function renderApprovalPage() {
@@ -454,8 +504,6 @@ function renderApprovalPage() {
 
   const agentLabel = capitalize(agent.agent || "agent");
   const shortPath = (agent.projectPath || "").split("/").pop() || "?";
-  const duration = formatDuration(agent.createdAt);
-
   // [1] Identity
   const btn0 = grid.children[0];
   resetBtn(btn0);
@@ -470,14 +518,12 @@ function renderApprovalPage() {
     log(`Focused terminal: ${agent.name}`);
   };
 
-  // [2] Duration
+  // [2] ▲ UP (arrow up — navigate options)
   const btn1 = grid.children[1];
   resetBtn(btn1);
-  btn1.classList.add("context-btn");
-  btn1.innerHTML = `
-    <span class="ctx-value">${duration}</span>
-    <span class="ctx-label">SESSION</span>
-  `;
+  btn1.classList.add("ctrl-btn", "nav-btn");
+  btn1.innerHTML = `<span class="ctrl-icon">▲</span><span class="ctrl-label">UP</span>`;
+  btn1.onclick = () => doNav("up");
 
   // [3] Approval summary / status
   const btn2 = grid.children[2];
@@ -504,13 +550,12 @@ function renderApprovalPage() {
   btnPrev.innerHTML = `<span class="ctrl-icon">◀</span><span class="ctrl-label">PREV</span>`;
   btnPrev.onclick = () => doNav("left");
 
-  // [5] ▲▼ UP/DOWN (arrow keys — navigate options)
-  const btnUpDown = grid.children[4];
-  resetBtn(btnUpDown);
-  btnUpDown.classList.add("ctrl-btn", "nav-btn");
-  btnUpDown.innerHTML = `<span class="ctrl-icon">▲▼</span><span class="ctrl-label">OPTIONS</span>`;
-  // Tap cycles down; the dial handles both directions
-  btnUpDown.onclick = () => doNav("down");
+  // [5] ▼ DOWN (arrow down — navigate options)
+  const btnDown = grid.children[4];
+  resetBtn(btnDown);
+  btnDown.classList.add("ctrl-btn", "nav-btn");
+  btnDown.innerHTML = `<span class="ctrl-icon">▼</span><span class="ctrl-label">DOWN</span>`;
+  btnDown.onclick = () => doNav("down");
 
   // [6] ▶ NEXT (Tab — next tab)
   const btnNext = grid.children[5];
@@ -532,6 +577,76 @@ function renderApprovalPage() {
   btnCancel.classList.add("ctrl-btn", "reject-btn");
   btnCancel.innerHTML = `<span class="ctrl-icon reject-icon">⎋</span><span class="ctrl-label">CANCEL</span>`;
   btnCancel.onclick = doCancel;
+
+  // [9] BACK
+  const btnBack = grid.children[8];
+  resetBtn(btnBack);
+  btnBack.classList.add("ctrl-btn");
+  btnBack.innerHTML = `<span class="ctrl-label">BACK</span>`;
+  btnBack.onclick = goBack;
+}
+
+// ── Skills View ─────────────────────────────────────────────────
+// Layout:
+//   [Commit]    [Fix]       [Test]        ← skill tiles
+//   [Refactor]  [Review]    [Explain]     ← skill tiles
+//   [TERMINAL]  [CUSTOM]    [BACK]        ← controls
+// Each skill = PluginDynamicCommand in Logi SDK (drag-and-drop in Options+)
+
+function renderSkillsPage() {
+  const grid = document.querySelector(".keypad-grid");
+  const agent = getSelectedAgent();
+
+  if (!agent) { goBack(); return; }
+
+  // [1-6] Skill tiles
+  for (let i = 0; i < SLOTS_PER_PAGE; i++) {
+    const btn = grid.children[i];
+    const skill = SKILLS[i];
+    resetBtn(btn);
+
+    if (!skill) {
+      btn.classList.add("empty");
+      continue;
+    }
+
+    btn.classList.add("menu-action-btn");
+    btn.style.borderColor = skill.color + "66";
+    btn.innerHTML = `
+      <span class="menu-action-icon" style="color:${skill.color}">${skill.icon}</span>
+      <span class="menu-action-label">${skill.label}</span>
+    `;
+    btn.onclick = ((s) => () => {
+      send({ type: "skill", agentId: agent.id, skillId: s.id });
+      log(`Skill: ${s.label} → ${agent.name}`);
+      view = "dashboard";
+      renderAll();
+    })(skill);
+  }
+
+  // [7] TERMINAL — focus terminal
+  const btnTerminal = grid.children[6];
+  resetBtn(btnTerminal);
+  btnTerminal.classList.add("ctrl-btn");
+  btnTerminal.innerHTML = `<span class="ctrl-icon">⌨</span><span class="ctrl-label">TERMINAL</span>`;
+  btnTerminal.onclick = () => {
+    send({ type: "open_terminal", agentId: agent.id });
+    log(`Terminal: ${agent.name}`);
+    view = "dashboard";
+    renderAll();
+  };
+
+  // [8] CUSTOM — free-form message via VS Code input
+  const btnCustom = grid.children[7];
+  resetBtn(btnCustom);
+  btnCustom.classList.add("ctrl-btn");
+  btnCustom.innerHTML = `<span class="ctrl-icon">?</span><span class="ctrl-label">CUSTOM</span>`;
+  btnCustom.onclick = () => {
+    send({ type: "skill", agentId: agent.id, skillId: "custom" });
+    log(`Custom prompt → ${agent.name} (check VS Code)`);
+    view = "dashboard";
+    renderAll();
+  };
 
   // [9] BACK
   const btnBack = grid.children[8];
@@ -631,6 +746,9 @@ function renderStatusList() {
       if (a.status === "waiting") {
         view = "approval";
         log(`${a.name}: needs input`);
+      } else if (a.status === "idle" || a.status === "error") {
+        view = "skills";
+        log(`${a.name}: skills \u2014 ${a.status}`);
       } else {
         log(`Focused: ${a.name}`);
         view = "dashboard";
@@ -710,6 +828,13 @@ function renderDialpad() {
       break;
     }
 
+    case "skills": {
+      const sa = getSelectedAgent();
+      dialLabel.textContent = sa ? `Skills\n${sa.name}` : "Skills";
+      rollerLabel.textContent = `${SKILLS.length} skills`;
+      break;
+    }
+
     case "menu": {
       const total = Math.max(1, Math.ceil(MENU_ACTIONS.length / MENU_PER_PAGE));
       dialLabel.textContent = `Actions\n${menuPage + 1}/${total}`;
@@ -777,6 +902,14 @@ function formatDuration(isoDate) {
 
 function escapeHtml(str) {
   return (str || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function updateDiffIndicator(msg) {
+  const dialLabel = document.getElementById("dial-label");
+  if (dialLabel) {
+    const shortName = msg.fileName.split("/").pop() || msg.fileName;
+    dialLabel.textContent = `${shortName}\n${msg.fileIndex + 1}/${msg.fileCount}`;
+  }
 }
 
 function updateConnection(connected) {

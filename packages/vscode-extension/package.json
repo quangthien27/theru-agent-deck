@@ -67,6 +67,11 @@
         "icon": "$(diff)"
       },
       {
+        "command": "agentdeck.closeDiff",
+        "title": "AgentDeck: Close Diff",
+        "icon": "$(close)"
+      },
+      {
         "command": "agentdeck.openSimulator",
         "title": "AgentDeck: Open Simulator",
         "icon": "$(device-desktop)"
@@ -84,6 +89,11 @@
           "type": "boolean",
           "default": true,
           "description": "Automatically detect and attach manually launched agents (claude, gemini, aider, codex, opencode) from any terminal"
+        },
+        "agentdeck.worktree.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Launch each agent in its own git worktree for isolation (branch: agentdeck/agent-<id>)"
         },
         "agentdeck.ai.enabled": {
           "type": "boolean",

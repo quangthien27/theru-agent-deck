@@ -1,12 +1,14 @@
 import * as vscode from 'vscode';
 import type { AgentManager } from './agent-manager';
+import type { DiffViewer } from './diff-viewer';
 import type { AgentType } from './protocol';
 import { SUPPORTED_AGENTS } from './protocol';
 import { openSimulatorWebview } from './simulator-webview';
 
 export function registerCommands(
   context: vscode.ExtensionContext,
-  agentManager: AgentManager
+  agentManager: AgentManager,
+  diffViewer: DiffViewer
 ): void {
 
   context.subscriptions.push(
@@ -47,8 +49,9 @@ export function registerCommands(
         placeHolder: 'e.g., fix the login bug',
       });
 
-      const id = agentManager.launch(agentType.label as AgentType, projectPath, message || undefined);
-      agentManager.showTerminal(id);
+      agentManager.launch(agentType.label as AgentType, projectPath, message || undefined);
+      // Terminal is shown by launchInDirectory — no need to call showTerminal here
+      // (worktree launch is async, agent may not exist yet)
     }),
 
     vscode.commands.registerCommand('agentdeck.approve', (agentId?: string) => {
@@ -83,13 +86,20 @@ export function registerCommands(
     }),
 
     vscode.commands.registerCommand('agentdeck.showDiff', async (agentId?: string) => {
-      const id = agentId || getWaitingAgentId(agentManager);
+      const id = agentId || getWaitingAgentId(agentManager) || await pickAgent(agentManager, 'Select agent to show diff');
       if (!id) {
-        vscode.window.showInformationMessage('No agent with pending approval');
+        vscode.window.showInformationMessage('No agent selected');
         return;
       }
-      // Show the terminal for now — diff viewer will be enhanced later
-      agentManager.showTerminal(id);
+      const agent = agentManager.getAgent(id);
+      if (!agent) return;
+      await diffViewer.show(id, agent.projectPath);
+    }),
+
+    vscode.commands.registerCommand('agentdeck.closeDiff', (agentId?: string) => {
+      if (agentId) {
+        diffViewer.remove(agentId);
+      }
     }),
 
     vscode.commands.registerCommand('agentdeck.openSimulator', () => {
