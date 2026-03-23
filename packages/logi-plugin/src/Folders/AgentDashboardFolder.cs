@@ -16,6 +16,11 @@ namespace Loupedeck.AgentDeckPlugin.Folders
         private Int32 _menuPage = 0;
         private Int32 _epoch = 0;
 
+        // Double-tap detection
+        private Int32 _lastTapPos = -1;
+        private DateTime _lastTapTime = DateTime.MinValue;
+        private const Int32 DoubleTapMs = 400;
+
         // Icon caches (loaded from embedded resources)
         private static readonly Dictionary<String, BitmapImage> AgentIconCache = new();
         private static readonly Dictionary<String, BitmapImage> LucideCache = new();
@@ -132,7 +137,6 @@ namespace Loupedeck.AgentDeckPlugin.Folders
             switch (_view)
             {
                 case "dashboard": OnDashboard(pos); break;
-                case "approval":  OnApproval(pos); break;
                 case "skills":    OnSkills(pos); break;
                 case "new-agent": OnNewAgent(pos); break;
                 case "menu":      OnMenu(pos); break;
@@ -151,7 +155,6 @@ namespace Loupedeck.AgentDeckPlugin.Folders
             return _view switch
             {
                 "dashboard"  => DrawDashboard(pos, sz),
-                "approval"   => DrawApproval(pos, sz),
                 "skills"     => DrawSkills(pos, sz),
                 "new-agent"  => DrawNewAgent(pos, sz),
                 "menu"       => DrawMenu(pos, sz),
@@ -172,10 +175,22 @@ namespace Loupedeck.AgentDeckPlugin.Folders
                 if (ai >= agents.Count) return;
                 var agent = agents[ai];
                 this.Plugin.State.SelectedAgentId = agent.Id;
+
+                // Double-tap detection: same agent tile within threshold → skills
+                var now = DateTime.UtcNow;
+                if (_lastTapPos == pos && (now - _lastTapTime).TotalMilliseconds < DoubleTapMs)
+                {
+                    _lastTapPos = -1;
+                    _view = "skills";
+                    Refresh();
+                    return;
+                }
+                _lastTapPos = pos;
+                _lastTapTime = now;
+
+                // Single tap: focus terminal
                 _ = this.Plugin.BridgeClient.SendOpenTerminal(agent.Id);
-                if (agent.Status == AgentStatus.Waiting) _view = "approval";
-                else if (agent.Status == AgentStatus.Idle || agent.Status == AgentStatus.Error) _view = "skills";
-                Refresh();
+                return;
             }
             else switch (pos)
             {
@@ -202,44 +217,6 @@ namespace Loupedeck.AgentDeckPlugin.Folders
                 5 => TileCtrl("plus", "NEW", new BitmapColor(40, 40, 60), sz),
                 6 => TileStatus(sz),
                 7 => TileCtrl("menu", "MENU", new BitmapColor(40, 50, 50), sz),
-                _ => Empty(sz)
-            };
-        }
-
-        // ══════════════════════════════════════════════════════════
-        // APPROVAL
-        //   [UP]  [CONT]  [PREV]  [DN]  [NXT]  [BACK]  [CFM]  [CXL]
-        // ══════════════════════════════════════════════════════════
-
-        private void OnApproval(Int32 pos)
-        {
-            var a = this.Plugin.State.GetSelectedAgent();
-            if (a == null) { GoBack(); return; }
-            switch (pos)
-            {
-                case 0: _ = this.Plugin.BridgeClient.SendCommand(a.Id, "nav_up"); break;
-                case 1: _ = this.Plugin.BridgeClient.SendSkill(a.Id, "custom", "continue"); break;
-                case 2: _ = this.Plugin.BridgeClient.SendCommand(a.Id, "nav_left"); break;
-                case 3: _ = this.Plugin.BridgeClient.SendCommand(a.Id, "nav_down"); break;
-                case 4: _ = this.Plugin.BridgeClient.SendCommand(a.Id, "nav_right"); break;
-                case 5: GoBack(); break;
-                case 6: _ = this.Plugin.BridgeClient.SendCommand(a.Id, "approve"); break;
-                case 7: _ = this.Plugin.BridgeClient.SendCommand(a.Id, "reject"); GoBack(); break;
-            }
-        }
-
-        private BitmapImage DrawApproval(Int32 pos, Int32 sz)
-        {
-            return pos switch
-            {
-                0 => TileCtrl("chevron-up", "UP", new BitmapColor(50, 50, 60), sz),
-                1 => TileCtrl("play", "CONTINUE", new BitmapColor(45, 120, 90), sz),
-                2 => TileCtrl("chevron-left", "PREV", new BitmapColor(50, 50, 60), sz),
-                3 => TileCtrl("chevron-down", "DOWN", new BitmapColor(50, 50, 60), sz),
-                4 => TileCtrl("chevron-right", "NEXT", new BitmapColor(50, 50, 60), sz),
-                5 => TileCtrl("chevron-left", "BACK", new BitmapColor(50, 50, 50), sz),
-                6 => TileCtrl("check", "CONFIRM", new BitmapColor(30, 120, 50), sz),
-                7 => TileCtrl("icon-x", "CANCEL", new BitmapColor(180, 40, 40), sz),
                 _ => Empty(sz)
             };
         }
@@ -373,11 +350,6 @@ namespace Loupedeck.AgentDeckPlugin.Folders
 
         internal void OnStateChanged()
         {
-            if (_view == "approval")
-            {
-                var a = this.Plugin.State.GetSelectedAgent();
-                if (a == null || a.Status != AgentStatus.Waiting) _view = "dashboard";
-            }
             Refresh();
         }
 

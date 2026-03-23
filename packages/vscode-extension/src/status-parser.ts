@@ -353,6 +353,9 @@ function isOpenCodeIdle(recentContent: string): boolean {
   // Initial empty prompt — always idle regardless of other content
   if (tail.includes('press enter to send') || tail.includes('Ask anything')) return true;
 
+  // OpenCode status bar shows "/status" and MCP info when idle at prompt
+  if (tail.includes('/status') && tail.includes('MCP')) return true;
+
   // Post-conversation idle: OpenCode shows the conversation with an input area.
   // The status bar shows "ctrl+p commands" and "tab agents" when ready.
   // Check tail for status bar presence AND absence of busy indicators.

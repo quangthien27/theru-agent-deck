@@ -130,9 +130,7 @@ The extension is the central hub — it manages agents, serves the Logi Plugin, 
 | `simulator-webview.ts` | Opens simulator as VS Code webview panel |
 | `protocol.ts` | Shared TypeScript types for agent sessions, commands, events |
 | `commands.ts` | Command palette: approve, reject, new agent, kill |
-
-**Not yet implemented:**
-| `diff-viewer.ts` | _(planned)_ Native diff editor for approval review |
+| `diff-viewer.ts` | Git diff viewer with dial scrubbing (nav_left/nav_right) |
 
 ### Agent Lifecycle
 
@@ -184,11 +182,12 @@ Note: `terminalDataWriteEvent` is a proposed API — requires `"enabledApiPropos
 
 1. **Sidebar: Agent List** — TreeView showing all agents with live status icons
 2. **Integrated Terminal** — Each agent runs in a VS Code terminal with full I/O
-3. **Diff Viewer** — _(not yet implemented)_ Will show pending changes via `vscode.diff` when agent is waiting
+3. **Diff Viewer** — Git diff integration with dial scrubbing (nav_left/nav_right to cycle changed files)
 4. **Commands** — Approve, reject, kill, new agent, show terminal, attach (command palette + sidebar buttons)
 5. **WebSocket Server** — Serves Logi Plugin and simulator on `:9999`
 6. **Logi Plugin Integration** — Receives commands, sends state updates and focus requests
 7. **Auto-Attach** — Detects manually launched agents in any terminal and promotes to managed
+8. **Window Focus** — Brings correct editor window to foreground on agent tile tap (osascript on macOS, PowerShell on Windows)
 
 ## Logi Plugin Architecture
 
@@ -208,38 +207,34 @@ The user assigns one "AgentDeck" Dynamic Folder action to an LCD button. Tapping
 ```
 Dashboard (always the same layout):
 ┌─────────┬─────────┬─────────┐
-│ JW  ●   │ AFH ◐   │ SNAP ✕  │  Agent tiles 1-6
+│ JW  ●   │ AFH ◐   │ SNAP ✕  │  Agent tiles 1-5
 │ running │ INPUT!  │ error   │  Color-coded status
-├─────────┼─────────┼─────────┤  Tap any tile → focus terminal in VS Code
-│ API ○   │  --     │  --     │
-│ ready   │ (empty) │ (empty) │
+├─────────┼─────────┼─────────┤  Single tap → focus terminal in VS Code
+│ API ○   │  --     │   +     │  Double tap → skills page
+│ ready   │ (empty) │  NEW    │
 ├─────────┼─────────┼─────────┤
-│   +     │  4 ●    │  CFG    │  Controls
-│  NEW    │ STATUS  │         │
+│         │  4 ●◐✕  │  MENU   │  Controls
+│         │ SESSIONS│         │
 └─────────┴─────────┴─────────┘
-Dial: scroll if >6 agents
+Dial: scroll if >5 agents
 
-Tap waiting agent (◐) → navigates into approval page:
+Double-tap any agent tile → skills page:
 
 ┌─────────┬─────────┬─────────┐
-│  AFH ◐  │ claude  │ ~/afh   │  Context (agent info)
-│ waiting │         │         │
+│ COMMIT  │   FIX   │  TEST   │  Skill tiles — send command to agent
+│    ✓    │   🔧    │   ✓     │
 ├─────────┼─────────┼─────────┤
-│         │         │         │  (reserved for future use)
-│         │         │         │
+│ REFACT  │ REVIEW  │  BACK   │
+│   ♻️    │   👁    │         │
 ├─────────┼─────────┼─────────┤
-│ APPROVE │ REJECT  │  BACK   │  Actions
-│    ✓    │    ✗    │         │
+│ EXPLAIN │   END   │         │  END = kill agent session
+│   💡    │    ✗    │         │
 └─────────┴─────────┴─────────┘
-User reads terminal in VS Code, then taps APPROVE or REJECT
 ```
 
 **Key behaviors:**
-- **Tap non-waiting tile** → VS Code focuses that agent's terminal. Dashboard stays.
-- **Tap waiting tile** → VS Code focuses terminal + navigates into approval page.
-- **APPROVE** → sends approve, returns to dashboard.
-- **REJECT** → sends reject, returns to dashboard.
-- **BACK** → cancels, returns to dashboard.
+- **Single tap any tile** → VS Code focuses that agent's terminal (brings app window to foreground).
+- **Double tap any tile** → Opens skills page for that agent (any status).
 - **No file details on LCD** — all code review happens on the monitor.
 
 ### Actions Ring (MX Master 4)
@@ -360,9 +355,9 @@ agentdeck/
 │   │       └── Helpers/
 │   │           ├── PluginLog.cs
 │   │           └── PluginResources.cs
+│   │       ├── Folders/
+│   │       │   └── AgentDashboardFolder.cs  # Dynamic Folder (main UI — dashboard/skills/new-agent/menu)
 │   │       # NOT YET IMPLEMENTED:
-│   │       # ├── Folders/
-│   │       # │   └── AgentDashboardFolder.cs  # Dynamic Folder (main UI)
 │   │       # ├── Commands/
 │   │       # │   ├── ApproveCommand.cs        # For Actions Ring
 │   │       # │   ├── RejectCommand.cs
@@ -383,11 +378,9 @@ agentdeck/
 │   │       ├── ws-server.ts          # WebSocket server :9999
 │   │       ├── sidebar-provider.ts   # TreeDataProvider for agent list
 │   │       ├── simulator-webview.ts  # Opens simulator as VS Code webview
-│   │       └── commands.ts           # Approve, reject, new agent, etc.
-│   │       # NOT YET IMPLEMENTED:
-│   │       # └── diff-viewer.ts      # Native diff editor for approvals
+│   │       ├── commands.ts           # Approve, reject, new agent, etc.
+│   │       └── diff-viewer.ts       # Git diff viewer + dial scrubbing
 │   │
-│   ├── bridge/                   # (legacy — may be removed)
 │   │
 │   └── simulator/                # Web Simulator (dev/testing)
 │       ├── package.json
@@ -410,16 +403,15 @@ User sees yellow pulsing tile on console (agent waiting)
     ├── MX Master 4 haptic buzz alerts user
     │   └── User glances at console, sees which agent needs them
     │
-    ├── Tap yellow tile on console
-    │   ├── VS Code focuses that agent's terminal (user reads context)
-    │   └── Console navigates into approval page (APPROVE / REJECT / BACK)
+    ├── Single tap any agent tile
+    │   └── VS Code window comes to foreground + focuses that agent's terminal
+    │       (uses osascript on macOS to activate correct window by workspace name)
     │
-    ├── User reads terminal on monitor, decides
-    │   ├── Taps APPROVE → Extension sends 'y' to terminal → agent continues → tile turns green
-    │   └── Taps REJECT → Extension sends 'n' to terminal → agent receives rejection
+    ├── Double tap any agent tile
+    │   └── Opens skills page (Commit, Fix, Test, Refactor, Review, Explain, END)
+    │       Works for any agent status — user handles approval via keyboard in terminal
     │
-    └── Tap non-waiting tile
-        └── VS Code focuses that terminal (no approve/reject needed)
+    └── User reads terminal on monitor, interacts directly via keyboard
 ```
 
 ## Development Commands
@@ -427,11 +419,13 @@ User sees yellow pulsing tile on console (agent waiting)
 ### VS Code Extension
 
 ```bash
-cd packages/vscode-extension
-npm install
-npm run compile      # Build extension
-npm run watch        # Watch mode
+# From project root (uses root package.json scripts):
+npm run ext:install   # Install dependencies
+npm run ext:compile   # Build extension
+npm run ext:watch     # Watch mode
+npm run ext:package   # Package as .vsix
 # F5 in VS Code → launches Extension Development Host
+# .vscode/launch.json + tasks.json configured at project root
 ```
 
 ### Logi Plugin
@@ -442,7 +436,7 @@ dotnet build -c Debug           # Build plugin DLL
 # logiplugintool pack → produces .lplug4
 ```
 
-**Note:** dotnet is installed via Homebrew at `/opt/homebrew/Cellar/dotnet@8/8.0.124/bin/dotnet` but not in PATH. Either add it to PATH or use the full path. The `obj/` directory at `logi-plugin/` (not `logi-plugin/src/`) can cause duplicate assembly attribute errors — delete it if that happens. Post-build auto-creates `.link` file and sends reload to Logi Plugin Service. After rebuild, run `pkill -f LogiPluginService` to force reload (it auto-restarts).
+**Note:** dotnet is installed via Homebrew at `/opt/homebrew/Cellar/dotnet@8/8.0.124/bin/dotnet` but not in PATH. Either add it to PATH or use the full path. The `obj/` directory at `logi-plugin/` (not `logi-plugin/src/`) can cause duplicate assembly attribute errors — delete it if that happens. Post-build auto-creates `.link` file and sends reload to Logi Plugin Service. If reload doesn't pick up changes, restart the service: `pkill -f LogiPluginService; sleep 2; open /Applications/Utilities/LogiPluginService.app` (it does NOT auto-restart).
 
 **Logi Plugin SDK Lessons Learned:**
 - A `ClientApplication` subclass is **required** even when `HasNoApplication = true` — without it the plugin fails to load with `'Loupedeck.ClientApplication' class not found`.
@@ -458,6 +452,7 @@ dotnet build -c Debug           # Build plugin DLL
 - **Agent icons**: PNG files in `Resources/Icons/` (claude, gemini, aider, opencode from simulator, codex provided separately). Codex only has SVG in simulator — needs a real PNG.
 - **Plugin reload**: `open loupedeck:plugin/AgentDeck/reload` triggers hot reload without killing the service. If service isn't running, start it with `open /Applications/Utilities/LogiPluginService.app`. `pkill -f LogiPluginService` kills it but it does NOT auto-restart — must be started manually.
 - **Tile vertical alignment**: Use percentage-based zones (top 55-60% for icon, bottom 35-40% for label) with `DrawText` bounding boxes for centering. All tile types (Ctrl, Status, Info) must use identical zones to align across a row.
+- **No hold/long-press support**: The SDK only fires `RunCommand` with no duration metadata. Workaround: use double-tap detection (track last tap position + timestamp, threshold ~400ms).
 
 ### Simulator
 
@@ -485,9 +480,10 @@ bun dev              # http://localhost:8888
 - [x] BridgeClient (WebSocket connection to extension :9999)
 - [x] Basic commands (AgentSlot, NewAgent, Status, Custom)
 - [x] Dial + roller adjustments
-- [x] Dynamic Folder with agent status tiles — `AgentDashboardFolder.cs` takes over 9 LCD buttons (dashboard/approval/skills/new-agent/menu views)
-- [x] Approve/reject flow via folder buttons — CONFIRM/CANCEL in approval view
+- [x] Dynamic Folder with agent status tiles — `AgentDashboardFolder.cs` takes over 9 LCD buttons (dashboard/skills/new-agent/menu views)
 - [x] NEW agent flow with agent type picker — 5 agent types + WORKTREE toggle in new-agent view
+- [x] Skills page via double-tap — Commit, Fix, Test, Refactor, Review, Explain + END (any agent status)
+- [x] Window focus — osascript activates correct editor window by workspace name on tile tap
 - [ ] Actions Ring commands (8 quick actions) — only 4 commands exist, missing: Approve, Reject, NextWaiting, Kill, OpenTerminal
 - [ ] Haptic notifications on MX Master 4 — no haptic code
 - [ ] Default profile (.lp5 pre-assigns folder to button)
@@ -498,7 +494,7 @@ bun dev              # http://localhost:8888
 ### Nice to Have
 - [ ] Cost tracking display
 - [x] Git worktree isolation — per-agent worktrees with toggle on NEW grid, auto-generated branches
-- [x] Agent skills page — Commit, Fix, Test, Refactor, Review, Explain + Custom (idle/error agents)
+- [x] Agent skills page — Commit, Fix, Test, Refactor, Review, Explain + END (any agent, via double-tap)
 - [ ] Session forking
 - [ ] Windows support
 
@@ -537,31 +533,14 @@ When multiple agents work on the same repo, they clobber each other's files. Git
 
 Reference: agent-of-empires uses worktrees (disabled by default, opt-in). Claude Code has built-in `--worktree` flag.
 
-### Agent Skills Page (Idle/Error Actions)
+### Agent Skills Page (Implemented)
 
-Inspired by [Conductor](https://devpost.com/software/conductor-tpdnkj)'s skill-based workflow. When tapping an agent tile on the dashboard and the agent is **idle** or **error**, navigate to a skills page instead of just focusing the terminal:
+Inspired by [Conductor](https://devpost.com/software/conductor-tpdnkj)'s skill-based workflow. **Double-tap** any agent tile on the dashboard (any status) to open the skills page:
 
-```
-Tap idle/error agent tile → Skills Page:
-┌─────────┬─────────┬─────────┐
-│  FIX    │ REFACT  │  TEST   │  Skill tiles — send command to agent
-│  🔧    │  ♻️    │  ✓     │
-├─────────┼─────────┼─────────┤
-│  DOCS   │ REVIEW  │ EXPLAIN │
-│  📝    │  👁    │  💡    │
-├─────────┼─────────┼─────────┤
-│ TERMINAL│ CUSTOM  │  BACK   │  Controls
-│  >_    │   ?    │         │
-└─────────┴─────────┴─────────┘
-```
-
-- **Idle agent**: Skills send a message to the agent's terminal (e.g. "fix the failing tests", "refactor this file")
-- **Error agent**: Skills can retry, explain error, or fix the issue
-- **Waiting agent**: Already has its own approval page (CONFIRM/CANCEL/nav)
-- **Working agent**: Tap → focus terminal only (no skills page, agent is busy)
-- **CUSTOM**: Opens VS Code input box for free-form message
-
-This gives the hardware a Conductor-like skill workflow while maintaining our multi-agent dashboard as the primary view.
+- Skills send a message to the agent's terminal (e.g. "fix the failing tests", "refactor this file")
+- **END** button kills the agent session
+- **BACK** returns to dashboard
+- Works for any agent status — single tap always focuses terminal, double tap always opens skills
 
 ### Diff Scrubbing via Dial
 

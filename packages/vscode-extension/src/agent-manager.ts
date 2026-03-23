@@ -277,6 +277,31 @@ export class AgentManager extends EventEmitter {
   showTerminal(agentId: string): void {
     const agent = this.agents.get(agentId);
     if (agent) {
+      // Bring the correct editor window to foreground by matching window title
+      if (process.platform === 'darwin') {
+        const appName = vscode.env.appName || 'Visual Studio Code';
+        // Get workspace folder name to match the correct window
+        const wsName = vscode.workspace.workspaceFolders?.[0]?.name || '';
+        execFile('osascript', ['-e',
+          `tell application "${appName}"\n` +
+          `  activate\n` +
+          `  set targetWindow to missing value\n` +
+          `  repeat with w in (every window)\n` +
+          `    if name of w contains "${wsName}" then\n` +
+          `      set targetWindow to w\n` +
+          `      exit repeat\n` +
+          `    end if\n` +
+          `  end repeat\n` +
+          `  if targetWindow is not missing value then\n` +
+          `    set index of targetWindow to 1\n` +
+          `  end if\n` +
+          `end tell`
+        ]);
+      } else if (process.platform === 'win32') {
+        const appName = vscode.env.appName || 'Code';
+        execFile('powershell', ['-Command',
+          `(New-Object -ComObject WScript.Shell).AppActivate("${appName}")`]);
+      }
       agent.terminal.show();
     }
   }
