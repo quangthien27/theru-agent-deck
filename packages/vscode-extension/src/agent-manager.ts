@@ -67,7 +67,13 @@ export class AgentManager extends EventEmitter {
           const agent = this.agents.get(agentId);
           if (agent) {
             const chunk = e.data;
-            agent.outputBuffer += chunk;
+            // Clear screen sequences (ESC[2J / ESC[3J) mean the TUI is redrawing —
+            // discard stale buffer so status parser sees fresh content only.
+            if (chunk.includes('\x1b[2J') || chunk.includes('\x1b[3J')) {
+              agent.outputBuffer = chunk;
+            } else {
+              agent.outputBuffer += chunk;
+            }
             if (agent.outputBuffer.length > OUTPUT_BUFFER_CAP) {
               agent.outputBuffer = agent.outputBuffer.slice(-OUTPUT_BUFFER_CAP);
             }
@@ -261,6 +267,41 @@ export class AgentManager extends EventEmitter {
     // Send Ctrl+C via sendText with raw escape
     agent.terminal.sendText('\x03', false);
     return true;
+  }
+
+  /** Resume agent — sends Enter to nudge the REPL/prompt */
+  resume(agentId: string): boolean {
+    const agent = this.agents.get(agentId);
+    if (!agent) return false;
+    agent.terminal.sendText('', true); // sends \r (Enter)
+    return true;
+  }
+
+  /** Restart agent — kills and re-launches same type in same project */
+  restart(agentId: string): void {
+    const agent = this.agents.get(agentId);
+    if (!agent) return;
+    const { agent: agentType, projectPath, worktreePath, worktreeBranch } = agent;
+    this.kill(agentId);
+    // Re-launch with same params after a short delay for terminal cleanup
+    setTimeout(() => {
+      this.launch(agentType as any, projectPath);
+    }, 500);
+  }
+
+  /** Create a git checkpoint tag in agent's working directory */
+  checkpoint(agentId: string): void {
+    const agent = this.agents.get(agentId);
+    if (!agent) return;
+    const cwd = agent.worktreePath || agent.projectPath;
+    const tag = `agentdeck/checkpoint/${agentId}/${Date.now()}`;
+    execFile('git', ['tag', tag], { cwd }, (err) => {
+      if (err) {
+        this.log.appendLine(`[CHECKPOINT ${agentId}] Failed: ${err.message}`);
+      } else {
+        this.log.appendLine(`[CHECKPOINT ${agentId}] Created tag: ${tag}`);
+      }
+    });
   }
 
   kill(agentId: string): boolean {

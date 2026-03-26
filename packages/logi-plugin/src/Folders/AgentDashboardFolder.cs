@@ -11,6 +11,8 @@ namespace Loupedeck.AgentDeckPlugin.Folders
 
         private new AgentDeckPlugin Plugin => (AgentDeckPlugin)base.Plugin;
 
+        internal String CurrentView => _view;
+
         private String _view = "dashboard";
         private Int32 _dashPage = 0;
         private Int32 _menuPage = 0;
@@ -20,6 +22,10 @@ namespace Loupedeck.AgentDeckPlugin.Folders
         private Int32 _lastTapPos = -1;
         private DateTime _lastTapTime = DateTime.MinValue;
         private const Int32 DoubleTapMs = 400;
+
+        // View-switch cooldown — blocks accidental third tap
+        private DateTime _viewSwitchTime = DateTime.MinValue;
+        private const Int32 CooldownMs = 1000;
 
         // Icon caches (loaded from embedded resources)
         private static readonly Dictionary<String, BitmapImage> AgentIconCache = new();
@@ -182,6 +188,7 @@ namespace Loupedeck.AgentDeckPlugin.Folders
                 {
                     _lastTapPos = -1;
                     _view = "skills";
+                    _viewSwitchTime = DateTime.UtcNow;
                     Refresh();
                     return;
                 }
@@ -228,6 +235,9 @@ namespace Loupedeck.AgentDeckPlugin.Folders
 
         private void OnSkills(Int32 pos)
         {
+            // Block input during cooldown to prevent accidental third-tap
+            if ((DateTime.UtcNow - _viewSwitchTime).TotalMilliseconds < CooldownMs) return;
+
             var a = this.Plugin.State.GetSelectedAgent();
             if (a == null) { GoBack(); return; }
             // pos 0-4 = skills 0-4, pos 5 = BACK, pos 6 = skill 5 (explain), pos 7 = custom
@@ -352,6 +362,9 @@ namespace Loupedeck.AgentDeckPlugin.Folders
         {
             Refresh();
         }
+
+        /// Called by dial/roller adjustments to refresh tiles after selection change.
+        internal void RefreshExternal() => Refresh();
 
         // ══════════════════════════════════════════════════════════
         // TILE RENDERERS — large text, consistent vertical layout

@@ -56,7 +56,7 @@ export interface FocusAgent {
 export interface AgentCommand {
   type: 'command';
   agentId: string;
-  action: 'approve' | 'reject' | 'pause' | 'resume' | 'kill'
+  action: 'approve' | 'reject' | 'pause' | 'resume' | 'kill' | 'restart' | 'checkpoint'
         | 'nav_up' | 'nav_down' | 'nav_left' | 'nav_right';
 }
 
@@ -98,7 +98,13 @@ export interface SkillCommand {
   customPrompt?: string; // only for skillId === 'custom'
 }
 
-export type ClientMessage = AgentCommand | LaunchAgent | OpenTerminal | ToggleWorktree | GetSettings | SkillCommand;
+export interface FocusView {
+  type: 'focus_view';
+  view: 'sidebar' | 'diff';
+  agentId?: string;
+}
+
+export type ClientMessage = AgentCommand | LaunchAgent | OpenTerminal | ToggleWorktree | GetSettings | SkillCommand | FocusView;
 // Extension → Client (diff scrubbing position feedback)
 export interface DiffPosition {
   type: 'diff_position';

@@ -39,6 +39,11 @@ namespace Loupedeck.AgentDeckPlugin
             // TODO: resolve plugin directory for bundled bridge
             // _bridgeLauncher.Start(pluginDirectory);
 
+            // Register haptic events for MX Master 4
+            this.PluginEvents.AddEvent("agent_needs_input", "Agent Needs Input", "An agent requires user approval or input");
+            this.PluginEvents.AddEvent("agent_completed", "Agent Completed", "An agent finished its task");
+            this.PluginEvents.AddEvent("agent_error", "Agent Error", "An agent encountered an error");
+
             // Connect to bridge WebSocket
             this.BridgeClient = new BridgeClient();
 
@@ -56,7 +61,20 @@ namespace Loupedeck.AgentDeckPlugin
             this.BridgeClient.OnAgentEvent += (agentId, eventType) =>
             {
                 PluginLog.Info($"Agent event: {agentId} -> {eventType}");
-                // TODO: trigger haptics based on eventType
+
+                // Trigger haptic feedback on MX Master 4
+                switch (eventType)
+                {
+                    case "needs_approval":
+                        this.PluginEvents.RaiseEvent("agent_needs_input");
+                        break;
+                    case "completed":
+                        this.PluginEvents.RaiseEvent("agent_completed");
+                        break;
+                    case "error":
+                        this.PluginEvents.RaiseEvent("agent_error");
+                        break;
+                }
             };
 
             this.BridgeClient.OnSettingsUpdate += (worktreeEnabled) =>

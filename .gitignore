@@ -3,3 +3,4 @@ docs/
 .aider*
 node_modules/
 packages/vscode-extension/out/
+ref

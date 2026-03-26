@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { execFile } from 'child_process';
 import { AgentManager } from './agent-manager';
 import { WSServer } from './ws-server';
 import { AgentSidebarProvider } from './sidebar-provider';
@@ -147,6 +148,15 @@ function handleClientMessage(msg: ClientMessage): void {
         case 'kill':
           agentManager.kill(msg.agentId);
           break;
+        case 'resume':
+          agentManager.resume(msg.agentId);
+          break;
+        case 'restart':
+          agentManager.restart(msg.agentId);
+          break;
+        case 'checkpoint':
+          agentManager.checkpoint(msg.agentId);
+          break;
         case 'nav_up':
           agentManager.navigate(msg.agentId, 'up');
           break;
@@ -214,15 +224,54 @@ function handleClientMessage(msg: ClientMessage): void {
         if (msg.customPrompt) {
           agentManager.sendMessage(msg.agentId, msg.customPrompt);
         } else {
-          // Open VS Code input box for custom prompt
           vscode.window.showInputBox({ prompt: 'Enter message for agent' }).then(text => {
             if (text) agentManager.sendMessage(msg.agentId, text);
           });
         }
+      } else if (msg.skillId === 'undo') {
+        // Agent-specific undo
+        const agent = agentManager.getAgent(msg.agentId);
+        if (agent) {
+          if (agent.agent === 'claude') {
+            agentManager.sendMessage(msg.agentId, '/undo');
+          } else {
+            // For other agents, run git checkout in their working directory
+            const cwd = agent.worktreePath || agent.projectPath;
+            execFile('git', ['checkout', '.'], { cwd }, (err) => {
+              if (err) {
+                vscode.window.showWarningMessage(`Undo failed: ${err.message}`);
+              } else {
+                vscode.window.showInformationMessage('Undo: reverted working directory changes');
+              }
+            });
+          }
+        }
+      } else if (msg.skillId === 'context_file') {
+        // Open file picker, send path to agent
+        vscode.window.showOpenDialog({ canSelectMany: false }).then(uris => {
+          if (uris && uris[0]) {
+            const agent = agentManager.getAgent(msg.agentId);
+            const relativePath = vscode.workspace.asRelativePath(uris[0]);
+            const prefix = agent?.agent === 'claude' ? '@' : '';
+            agentManager.sendMessage(msg.agentId, `look at ${prefix}${relativePath}`);
+          }
+        });
       } else {
         const skill = AGENT_SKILLS.find(s => s.id === msg.skillId);
         if (skill) {
           agentManager.sendMessage(msg.agentId, skill.prompt);
+        }
+      }
+      break;
+    }
+
+    case 'focus_view': {
+      if (msg.view === 'sidebar') {
+        vscode.commands.executeCommand('agentdeck.sidebarView.focus');
+      } else if (msg.view === 'diff' && msg.agentId) {
+        const agent = agentManager.getAgent(msg.agentId);
+        if (agent) {
+          diffViewer.show(msg.agentId, agent.projectPath);
         }
       }
       break;

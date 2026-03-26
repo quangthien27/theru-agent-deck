@@ -1,6 +1,7 @@
 namespace Loupedeck.AgentDeckPlugin.Adjustments
 {
     using System;
+    using System.Linq;
     using Loupedeck.AgentDeckPlugin.Models;
 
     public class RollerAdjustment : PluginDynamicAdjustment
@@ -8,48 +9,35 @@ namespace Loupedeck.AgentDeckPlugin.Adjustments
         private new AgentDeckPlugin Plugin => (AgentDeckPlugin)base.Plugin;
 
         public RollerAdjustment()
-            : base("File Navigator", "Navigate between files in changeset", "Navigation", hasReset: false)
+            : base("Agent Roller", "Cycle through agents", "Navigation", hasReset: false)
         {
         }
 
         protected override void ApplyAdjustment(String actionParameter, Int32 diff)
         {
-            // Roller: navigate between files in approval changeset
-            var agent = this.Plugin.State.GetSelectedAgent();
-            if (agent?.Approval?.Files == null || agent.Approval.Files.Length == 0)
-            {
-                return;
-            }
+            var agents = this.Plugin.State.Agents;
+            if (agents.Count == 0) return;
 
-            var fileCount = agent.Approval.Files.Length;
-            var newIndex = this.Plugin.State.RingFileIndex + diff;
+            // Roller always cycles through agents (dashboard context)
+            var currentIdx = agents.FindIndex(a => a.Id == this.Plugin.State.SelectedAgentId);
+            if (currentIdx < 0) currentIdx = 0;
+            var newIdx = (currentIdx + diff) % agents.Count;
+            if (newIdx < 0) newIdx += agents.Count;
 
-            // Clamp to valid range
-            if (newIndex < 0)
-            {
-                newIndex = 0;
-            }
-            else if (newIndex >= fileCount)
-            {
-                newIndex = fileCount - 1;
-            }
-
-            this.Plugin.State.RingFileIndex = newIndex;
-            this.Plugin.State.RingScrollOffset = 0; // Reset scroll when switching files
+            this.Plugin.State.SelectedAgentId = agents[newIdx].Id;
+            _ = this.Plugin.BridgeClient.SendOpenTerminal(agents[newIdx].Id);
+            this.Plugin.ActiveFolder?.RefreshExternal();
             this.AdjustmentValueChanged();
         }
 
         protected override String GetAdjustmentValue(String actionParameter)
         {
             var agent = this.Plugin.State.GetSelectedAgent();
-            if (agent?.Approval?.Files == null || agent.Approval.Files.Length == 0)
-            {
-                return "";
-            }
+            if (agent == null) return "No agent";
 
-            var idx = this.Plugin.State.RingFileIndex;
-            var total = agent.Approval.Files.Length;
-            return $"File {idx + 1}/{total}";
+            var agents = this.Plugin.State.Agents;
+            var idx = agents.FindIndex(a => a.Id == agent.Id);
+            return $"{agent.Name} ({idx + 1}/{agents.Count})";
         }
     }
 }

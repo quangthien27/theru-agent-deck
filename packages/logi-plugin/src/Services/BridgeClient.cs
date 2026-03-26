@@ -350,6 +350,24 @@ namespace Loupedeck.AgentDeckPlugin.Services
             catch (Exception ex) { PluginLog.Error(ex, "Failed to send get_settings"); }
         }
 
+        public async Task SendFocusView(String view, String agentId = null)
+        {
+            if (_socket?.State != WebSocketState.Open) return;
+
+            var json = agentId != null
+                ? JsonSerializer.Serialize(new { type = "focus_view", view, agentId }, _jsonOptions)
+                : JsonSerializer.Serialize(new { type = "focus_view", view }, _jsonOptions);
+            var bytes = Encoding.UTF8.GetBytes(json);
+
+            try
+            {
+                await _socket.SendAsync(
+                    new ArraySegment<Byte>(bytes), WebSocketMessageType.Text, true,
+                    _cts?.Token ?? CancellationToken.None);
+            }
+            catch (Exception ex) { PluginLog.Error(ex, "Failed to send focus_view"); }
+        }
+
         public void Dispose()
         {
             if (_disposed)

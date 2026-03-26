@@ -149,9 +149,14 @@ function hasClaudeInteractiveUI(content: string): boolean {
 // ── Claude-specific detection ──
 
 function isClaudeBusy(lastLines: string[], recentLower: string): boolean {
-  // If interrupted, agent is waiting for new input — not busy
+  // If interrupted or showing a prompt/selection UI in the tail, not busy — stale spinners linger
   const tail = recentLower.slice(-800);
   if (tail.includes('interrupted') || tail.includes('what should claude do instead') || tail.includes('whatshouldclaudodoinstead')) {
+    return false;
+  }
+  // Plan review / numbered option prompts override stale spinners
+  if (tail.includes('auto-accept edits') || tail.includes('manually approve edits')
+      || tail.includes('tell claude what to change') || tail.includes('would you like to proceed')) {
     return false;
   }
 
