@@ -6,7 +6,7 @@ namespace Loupedeck.AgentDeckPlugin.Helpers
     /// Shared tile rendering for standalone commands — matches AgentDashboardFolder style.
     internal static class TileRenderer
     {
-        private static readonly Dictionary<String, BitmapImage> LucideCache = new();
+        internal static readonly Dictionary<String, BitmapImage> LucideIconCache = new();
         internal static readonly Dictionary<String, BitmapImage> AgentIconCache = new();
         private static Boolean _loaded;
 
@@ -25,11 +25,11 @@ namespace Loupedeck.AgentDeckPlugin.Helpers
             var names = new[] {
                 "check", "icon-x", "circle-dot", "circle-pause",
                 "play", "chevron-right", "terminal", "menu", "eye",
-                "rotate-ccw", "undo-2", "hash", "code"
+                "rotate-ccw", "undo-2", "hash", "code", "settings", "plus", "bot"
             };
             foreach (var name in names)
             {
-                try { var i = PluginResources.ReadImage($"{name}.png"); if (i != null) LucideCache[name] = i; }
+                try { var i = PluginResources.ReadImage($"{name}.png"); if (i != null) LucideIconCache[name] = i; }
                 catch { }
             }
         }
@@ -55,7 +55,7 @@ namespace Loupedeck.AgentDeckPlugin.Helpers
             var totalH = iconSz + gap + labelH;
             var startY = (sz - totalH) / 2;
 
-            if (LucideCache.TryGetValue(lucideOrText, out var icon))
+            if (LucideIconCache.TryGetValue(lucideOrText, out var icon))
             {
                 b.DrawImage(icon, (sz - iconSz) / 2, startY, iconSz, iconSz);
             }
@@ -84,7 +84,7 @@ namespace Loupedeck.AgentDeckPlugin.Helpers
             var totalH = iconSz + gap + labelH;
             var startY = (sz - totalH) / 2;
 
-            if (LucideCache.TryGetValue(lucideOrText, out var icon))
+            if (LucideIconCache.TryGetValue(lucideOrText, out var icon))
             {
                 b.DrawImage(icon, (sz - iconSz) / 2, startY, iconSz, iconSz);
             }

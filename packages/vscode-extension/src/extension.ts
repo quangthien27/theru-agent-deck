@@ -157,6 +157,9 @@ function handleClientMessage(msg: ClientMessage): void {
         case 'checkpoint':
           agentManager.checkpoint(msg.agentId);
           break;
+        case 'cycle_mode':
+          agentManager.cycleMode(msg.agentId);
+          break;
         case 'nav_up':
           agentManager.navigate(msg.agentId, 'up');
           break;
@@ -228,34 +231,6 @@ function handleClientMessage(msg: ClientMessage): void {
             if (text) agentManager.sendMessage(msg.agentId, text);
           });
         }
-      } else if (msg.skillId === 'undo') {
-        // Agent-specific undo
-        const agent = agentManager.getAgent(msg.agentId);
-        if (agent) {
-          if (agent.agent === 'claude') {
-            agentManager.sendMessage(msg.agentId, '/undo');
-          } else {
-            // For other agents, run git checkout in their working directory
-            const cwd = agent.worktreePath || agent.projectPath;
-            execFile('git', ['checkout', '.'], { cwd }, (err) => {
-              if (err) {
-                vscode.window.showWarningMessage(`Undo failed: ${err.message}`);
-              } else {
-                vscode.window.showInformationMessage('Undo: reverted working directory changes');
-              }
-            });
-          }
-        }
-      } else if (msg.skillId === 'context_file') {
-        // Open file picker, send path to agent
-        vscode.window.showOpenDialog({ canSelectMany: false }).then(uris => {
-          if (uris && uris[0]) {
-            const agent = agentManager.getAgent(msg.agentId);
-            const relativePath = vscode.workspace.asRelativePath(uris[0]);
-            const prefix = agent?.agent === 'claude' ? '@' : '';
-            agentManager.sendMessage(msg.agentId, `look at ${prefix}${relativePath}`);
-          }
-        });
       } else {
         const skill = AGENT_SKILLS.find(s => s.id === msg.skillId);
         if (skill) {

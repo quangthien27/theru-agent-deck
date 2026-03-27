@@ -11,7 +11,7 @@ namespace Loupedeck.AgentDeckPlugin.Commands
         private new AgentDeckPlugin Plugin => (AgentDeckPlugin)base.Plugin;
 
         public CycleAgentCommand()
-            : base("Cycle Agent", "Select next agent and focus terminal", "Navigation") { }
+            : base("Cycle Agent", "Cycle Agent — Select next and focus terminal", "Navigation") { }
 
         protected override void RunCommand(String actionParameter)
         {
@@ -25,6 +25,8 @@ namespace Loupedeck.AgentDeckPlugin.Commands
             this.Plugin.ActiveFolder?.RefreshExternal();
             this.Plugin.RefreshAll();
         }
+
+        protected override String GetCommandDisplayName(String actionParameter, PluginImageSize imageSize) => "";
 
         protected override BitmapImage GetCommandImage(String actionParameter, PluginImageSize imageSize)
         {

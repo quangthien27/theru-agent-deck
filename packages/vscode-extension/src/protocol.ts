@@ -56,7 +56,7 @@ export interface FocusAgent {
 export interface AgentCommand {
   type: 'command';
   agentId: string;
-  action: 'approve' | 'reject' | 'pause' | 'resume' | 'kill' | 'restart' | 'checkpoint'
+  action: 'approve' | 'reject' | 'pause' | 'resume' | 'kill' | 'restart' | 'checkpoint' | 'cycle_mode'
         | 'nav_up' | 'nav_down' | 'nav_left' | 'nav_right';
 }
 
@@ -81,12 +81,7 @@ export interface GetSettings {
 }
 
 export const AGENT_SKILLS = [
-  { id: 'commit',   label: 'Commit',   icon: '⏎', prompt: '/commit' },
-  { id: 'fix',      label: 'Fix',      icon: '🔧', prompt: 'fix the failing tests and errors' },
-  { id: 'test',     label: 'Test',     icon: '✓', prompt: 'run the tests and fix any failures' },
-  { id: 'refactor', label: 'Refactor', icon: '♻', prompt: 'refactor the recent changes for clarity' },
-  { id: 'review',   label: 'Review',   icon: '👁', prompt: 'review the recent changes and suggest improvements' },
-  { id: 'explain',  label: 'Explain',  icon: '💡', prompt: 'explain what the recent changes do' },
+  { id: 'commit',   label: 'Commit',   icon: '⏎', prompt: 'commit the current changes with a descriptive message' },
 ] as const;
 
 export type SkillId = typeof AGENT_SKILLS[number]['id'];

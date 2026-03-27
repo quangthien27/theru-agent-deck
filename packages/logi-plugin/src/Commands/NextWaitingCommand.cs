@@ -11,7 +11,7 @@ namespace Loupedeck.AgentDeckPlugin.Commands
         private new AgentDeckPlugin Plugin => (AgentDeckPlugin)base.Plugin;
 
         public NextWaitingCommand()
-            : base("Next Waiting", "Focus next waiting agent", "Controls") { }
+            : base("Next Waiting", "Next Waiting — Focus next waiting agent", "Controls") { }
 
         protected override void RunCommand(String actionParameter)
         {
@@ -26,6 +26,8 @@ namespace Loupedeck.AgentDeckPlugin.Commands
             this.Plugin.State.SelectedAgentId = next.Id;
             _ = this.Plugin.BridgeClient.SendOpenTerminal(next.Id);
         }
+
+        protected override String GetCommandDisplayName(String actionParameter, PluginImageSize imageSize) => "";
 
         protected override BitmapImage GetCommandImage(String actionParameter, PluginImageSize imageSize)
         {

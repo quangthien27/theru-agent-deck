@@ -67,6 +67,55 @@ export class AgentManager extends EventEmitter {
           const agent = this.agents.get(agentId);
           if (agent) {
             const chunk = e.data;
+
+            // ── Escape sequence detection (instant, no polling) ──
+
+            // Log any special escape chars found in this chunk
+            const escapes: string[] = [];
+            if (chunk.includes('\x07')) escapes.push('BEL(\\x07)');
+            if (chunk.includes('\x1b]9;')) escapes.push('OSC9');
+            if (chunk.includes('\x1b]777;')) escapes.push('OSC777');
+            if (chunk.includes('\x1b]2;')) escapes.push('OSC2-title');
+            if (chunk.includes('\x1b[2J')) escapes.push('CLEAR-2J');
+            if (chunk.includes('\x1b[3J')) escapes.push('CLEAR-3J');
+            if (escapes.length > 0) {
+              this.log.appendLine(`[ESC ${agentId}] detected: ${escapes.join(', ')}  (status=${agent.status}, chunk=${chunk.length}b)`);
+            }
+
+            // BEL character (\x07) = agent requesting attention (needs input).
+            // Claude Code sends BEL when waiting for approval.
+            if (chunk.includes('\x07') && agent.status === 'working') {
+              // Exclude BEL inside OSC sequences (OSC uses BEL as terminator)
+              const hasBarebell = chunk.includes('\x07') && !chunk.includes('\x1b]');
+              if (hasBarebell) {
+                this.log.appendLine(`[BEL ${agentId}] Bell detected — agent needs input`);
+                const prev = agent.status;
+                agent.status = 'waiting';
+                this.emit('statusChange', agentId, prev, 'waiting');
+                this.emitStateChange();
+              }
+            }
+
+            // OSC 9 / 777 desktop notifications — agents send these for status.
+            // OSC 9: ESC]9;message BEL   OSC 777: ESC]777;notify;title;body BEL
+            if (chunk.includes('\x1b]9;') || chunk.includes('\x1b]777;')) {
+              const oscMatch = chunk.match(/\x1b\](?:9;([^\x07]*)|777;notify;([^;]*);([^\x07]*))\x07/);
+              if (oscMatch) {
+                const body = oscMatch[1] || oscMatch[3] || '';
+                const title = oscMatch[2] || '';
+                this.log.appendLine(`[OSC-NOTIFY ${agentId}] title="${title}" body="${body.slice(0, 100)}"`);
+              }
+            }
+
+            // OSC 2 title change — agents may set terminal title with status info.
+            // ESC]2;title BEL or ESC]2;title ST(ESC\)
+            if (chunk.includes('\x1b]2;')) {
+              const titleMatch = chunk.match(/\x1b\]2;([^\x07\x1b]*)/);
+              if (titleMatch) {
+                this.log.appendLine(`[TITLE ${agentId}] "${titleMatch[1].slice(0, 80)}"`);
+              }
+            }
+
             // Clear screen sequences (ESC[2J / ESC[3J) mean the TUI is redrawing —
             // discard stale buffer so status parser sees fresh content only.
             if (chunk.includes('\x1b[2J') || chunk.includes('\x1b[3J')) {
@@ -277,16 +326,27 @@ export class AgentManager extends EventEmitter {
     return true;
   }
 
-  /** Restart agent — kills and re-launches same type in same project */
+  /** Restart agent — kills and re-launches same type in same project/worktree */
   restart(agentId: string): void {
     const agent = this.agents.get(agentId);
     if (!agent) return;
-    const { agent: agentType, projectPath, worktreePath, worktreeBranch } = agent;
+    const { agent: agentType, projectPath } = agent;
+    const hadWorktree = !!agent.worktreePath;
     this.kill(agentId);
     // Re-launch with same params after a short delay for terminal cleanup
+    // launch() will auto-create a new worktree if worktree setting is enabled
+    // and the original agent had one
     setTimeout(() => {
       this.launch(agentType as any, projectPath);
     }, 500);
+  }
+
+  /** Send Shift+Tab to cycle permission mode (ask → auto → plan). Claude & Codex. */
+  cycleMode(agentId: string): boolean {
+    const agent = this.agents.get(agentId);
+    if (!agent) return false;
+    agent.terminal.sendText('\x1b[Z', false); // Shift+Tab
+    return true;
   }
 
   /** Create a git checkpoint tag in agent's working directory */
@@ -318,26 +378,43 @@ export class AgentManager extends EventEmitter {
   showTerminal(agentId: string): void {
     const agent = this.agents.get(agentId);
     if (agent) {
-      // Bring the correct editor window to foreground by matching window title
+      // Bring the correct editor window to foreground by matching window title.
+      // Use the agent's project folder name (last path segment) to find the right window.
       if (process.platform === 'darwin') {
         const appName = vscode.env.appName || 'Visual Studio Code';
-        // Get workspace folder name to match the correct window
-        const wsName = vscode.workspace.workspaceFolders?.[0]?.name || '';
+        const projectName = agent.projectPath.split('/').filter(Boolean).pop() || '';
+        this.log.appendLine(`[FOCUS] appName="${appName}" projectName="${projectName}"`);
+        // Two-step approach:
+        // 1. tell application (by display name) → activate + set index (works cross-app)
+        // 2. tell System Events (by process name from bundle) → AXRaise (works same-app)
         execFile('osascript', ['-e',
+          `-- Step 1: activate app and reorder window (works when switching FROM another app)\n` +
           `tell application "${appName}"\n` +
           `  activate\n` +
-          `  set targetWindow to missing value\n` +
           `  repeat with w in (every window)\n` +
-          `    if name of w contains "${wsName}" then\n` +
-          `      set targetWindow to w\n` +
+          `    if name of w contains "${projectName}" then\n` +
+          `      set index of w to 1\n` +
           `      exit repeat\n` +
           `    end if\n` +
           `  end repeat\n` +
-          `  if targetWindow is not missing value then\n` +
-          `    set index of targetWindow to 1\n` +
-          `  end if\n` +
+          `end tell\n` +
+          `\n` +
+          `-- Step 2: AXRaise via System Events (works when switching WITHIN same app)\n` +
+          `-- Get the real process name from the bundle so it works for Windsurf, Cursor, VS Code, etc.\n` +
+          `tell application "System Events"\n` +
+          `  set appProcess to first process whose frontmost is true\n` +
+          `  repeat with w in (every window of appProcess)\n` +
+          `    if name of w contains "${projectName}" then\n` +
+          `      perform action "AXRaise" of w\n` +
+          `      exit repeat\n` +
+          `    end if\n` +
+          `  end repeat\n` +
           `end tell`
-        ]);
+        ], (err) => {
+          if (err) {
+            this.log.appendLine(`[FOCUS] osascript error: ${err.message}`);
+          }
+        });
       } else if (process.platform === 'win32') {
         const appName = vscode.env.appName || 'Code';
         execFile('powershell', ['-Command',

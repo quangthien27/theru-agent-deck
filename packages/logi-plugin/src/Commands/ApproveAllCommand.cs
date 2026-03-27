@@ -11,7 +11,7 @@ namespace Loupedeck.AgentDeckPlugin.Commands
         private new AgentDeckPlugin Plugin => (AgentDeckPlugin)base.Plugin;
 
         public ApproveAllCommand()
-            : base("Approve All", "Approve all waiting agents", "Controls") { }
+            : base("Approve All", "Approve All — Approve all waiting agents", "Controls") { }
 
         protected override void RunCommand(String actionParameter)
         {
@@ -20,6 +20,8 @@ namespace Loupedeck.AgentDeckPlugin.Commands
                 _ = this.Plugin.BridgeClient.SendCommand(agent.Id, "approve");
             }
         }
+
+        protected override String GetCommandDisplayName(String actionParameter, PluginImageSize imageSize) => "";
 
         protected override BitmapImage GetCommandImage(String actionParameter, PluginImageSize imageSize)
         {

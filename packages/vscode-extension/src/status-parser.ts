@@ -149,8 +149,12 @@ function hasClaudeInteractiveUI(content: string): boolean {
 // ── Claude-specific detection ──
 
 function isClaudeBusy(lastLines: string[], recentLower: string): boolean {
-  // If interrupted or showing a prompt/selection UI in the tail, not busy — stale spinners linger
+  // "Checking for updates" is background noise, not agent work — ignore it
   const tail = recentLower.slice(-800);
+  if (tail.replace(/\s/g, '').endsWith('checkingforupdates')) {
+    return false;
+  }
+  // If interrupted or showing a prompt/selection UI in the tail, not busy — stale spinners linger
   if (tail.includes('interrupted') || tail.includes('what should claude do instead') || tail.includes('whatshouldclaudodoinstead')) {
     return false;
   }

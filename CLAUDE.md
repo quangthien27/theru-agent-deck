@@ -89,9 +89,9 @@ The extension detects these statuses by parsing terminal output. UI maps them co
 | `idle` | `○` | Gray | Gray tile, "ready" | Ready for commands |
 | `error` | `✕` | Red | Red tile (pulsing), "error" | Something went wrong |
 
-### Status Detection Patterns
+### Status Detection (3-Layer)
 
-The extension parses terminal output to detect status. Patterns per agent type:
+Detection uses three layers in priority order: (1) **escape sequences** (BEL, OSC — instant), (2) **heuristic pattern matching** (2s polling), (3) **AI classifier** (optional Ollama fallback). The heuristic patterns per agent type:
 
 | Agent | Waiting signal | Idle signal | Error signal |
 |---|---|---|---|
@@ -99,6 +99,21 @@ The extension parses terminal output to detect status. Patterns per agent type:
 | Gemini CLI | `Confirm?`, `[Y/n]` | Prompt idle | Error output |
 | Aider | `/run`, `y/n` prompts | `aider>` prompt | Error messages |
 | Generic | `[y/N]`, `[Y/n]`, `approve` | Shell prompt | `error`, `Error`, `ERROR` |
+
+### Escape Sequence Detection (Instant, No Polling)
+
+Inspired by [Ghostty terminal](https://github.com/ghostty-org/ghostty)'s approach to terminal signals. The extension intercepts standard terminal escape sequences from the raw data stream for instant status detection — no polling interval, no TUI pattern matching needed.
+
+| Signal | Escape Sequence | What AgentDeck does |
+|---|---|---|
+| **BEL** (`\x07`) | Terminal bell character | Instantly transitions agent to `waiting`. Claude Code sends BEL when it needs approval — this is the fastest, most reliable detection method. |
+| **OSC 9/777** | `ESC]9;message\a` / `ESC]777;notify;title;body\a` | Desktop notification from agent. Logged for status correlation. |
+| **OSC 2** | `ESC]2;title\a` | Terminal title change. Agents may encode status in the title. Logged. |
+| **Clear screen** (`ESC[2J`/`ESC[3J`) | Full screen redraw | Resets the output buffer — discards stale TUI content so the heuristic parser sees fresh output only. |
+
+**Priority**: BEL > heuristic patterns > AI classifier. BEL fires instantly (within the same data chunk), while the heuristic parser runs on a 2-second polling interval. For Claude Code, BEL alone handles most waiting-state transitions.
+
+**Bare BEL vs OSC terminator**: BEL (`\x07`) is also used as the terminator for OSC sequences (e.g., `ESC]9;hello\x07`). The extension checks that BEL is not inside an OSC sequence before triggering the waiting transition.
 
 ### AI Status Classifier (Optional)
 
@@ -453,6 +468,13 @@ dotnet build -c Debug           # Build plugin DLL
 - **Plugin reload**: `open loupedeck:plugin/AgentDeck/reload` triggers hot reload without killing the service. If service isn't running, start it with `open /Applications/Utilities/LogiPluginService.app`. `pkill -f LogiPluginService` kills it but it does NOT auto-restart — must be started manually.
 - **Tile vertical alignment**: Use percentage-based zones (top 55-60% for icon, bottom 35-40% for label) with `DrawText` bounding boxes for centering. All tile types (Ctrl, Status, Info) must use identical zones to align across a row.
 - **No hold/long-press support**: The SDK only fires `RunCommand` with no duration metadata. Workaround: use double-tap detection (track last tap position + timestamp, threshold ~400ms).
+- **Profile actions with dropdown**: Use `MakeProfileAction("tree")` in constructor + override `GetProfileActionData()` returning a `PluginProfileActionTree`. Requires exactly **2 levels** (`tree.AddLevel()` twice) — single-level trees don't enable the Save button. Add nodes at level 1 via `tree.Root.AddNode(name)`, then items at level 2 via `node.AddItem(id, displayName, null)` (third param must be `null`). The `id` from `AddItem` is passed to `RunCommand` as `actionParameter`. Note: `GetCommandImage` receives SDK internal GUIDs, not your item IDs — so tile bitmaps can't be dynamic per selection. Tile label comes from the tree item display name.
+- **`AddParameter` sub-items don't appear in Options+**: Despite `AddParameter()` registering entries, they don't show as separate draggable actions in the Options+ list. Use profile actions (`MakeProfileAction("tree")`) with dropdowns instead for parameterized commands.
+- **Full service restart clears tile caches**: `open loupedeck:plugin/AgentDeck/reload` hot-reloads code but preserves stale tile renders. `pkill -f LogiPluginService` + restart clears all caches including tile bitmaps and labels.
+- **`hasReset` on adjustments**: Setting `hasReset: true` in `PluginDynamicAdjustment` constructor creates a separate "Reset" action in Options+. Set to `false` if you don't want that extra action cluttering the list.
+- **View-switch cooldown**: When navigating between Dynamic Folder views (e.g. double-tap → skills page), block input for ~1 second to prevent accidental third-tap triggering a skill action immediately.
+- **Action symbols** (icons in Logi Options+ action picker): Place SVGs in `package/actionsymbols/` named `{FullNamespace}.{ClassName}.svg` (e.g. `Loupedeck.AgentDeckPlugin.Commands.CycleAgentCommand.svg`). SVGs must be **32x32 viewBox**, use **filled paths with `fill="#E2E2E2"`** (light gray), **no strokes** — Logi+ recolors the `#E2E2E2` fill on hover. Do NOT use `stroke`-based SVGs or `fill="none"` outlines — Logi+ ignores stroke attributes and auto-fills closed shapes with black. Reference official symbols at `/Applications/Utilities/LogiPluginService.app/Contents/MonoBundle/Plugins/DefaultMac/actionsymbols/` for the correct format. Requires service restart to pick up changes. **Note:** `PluginDynamicFolder` does NOT support action symbols — only commands and adjustments get icons in the Logi+ picker.
+- **Creating action symbol SVGs**: Lucide icons are stroke-based but Logi+ needs filled outline paths (32x32, `fill="#E2E2E2"`, `fill-rule="evenodd"`). Workflow: (1) download Lucide SVG from `unpkg.com/lucide-static@latest/icons/{name}.svg` with `curl -sL`, (2) manually convert stroke paths to filled outline paths in a Node.js script — define each icon's paths as arrays of `d` strings, wrap in `<svg width="32" height="32" viewBox="0 0 32 32">` with `<path fill="#E2E2E2" fill-rule="evenodd" clip-rule="evenodd">`. To resize icons within the 32x32 canvas (e.g. 75%), wrap paths in `<g transform="translate(4,4) scale(0.75)">`. See `/tmp/convert_icons.mjs` for the pattern used to generate the current icons.
 
 ### Simulator
 
@@ -460,6 +482,24 @@ dotnet build -c Debug           # Build plugin DLL
 cd packages/simulator
 bun dev              # http://localhost:8888
 ```
+
+### Release / Packaging
+
+```bash
+npm run release          # Build both packages into releases/v{version}-{timestamp}-{commit}/
+```
+
+Produces:
+- `AgentDeck-{version}.lplug4` — Logi Plugin (double-click or `logiplugintool install` to install)
+- `agentdeck-{version}.vsix` — VS Code Extension (`code --install-extension` or Windsurf "Install from VSIX")
+- `BUILD_INFO.txt` — version, commit, date for traceability
+
+Bump version before a new release:
+```bash
+npm version patch --prefix packages/vscode-extension --no-git-tag-version
+```
+
+The `releases/` directory is gitignored. The Logi plugin version is set in `packages/logi-plugin/src/package/metadata/LoupedeckPackage.yaml` (update `version:` manually to match). Requires `dotnet` (Homebrew) and `logiplugintool` (.NET global tool) — see script at `scripts/release.sh` for PATH setup.
 
 ## Build Phase Deliverables
 
@@ -507,7 +547,7 @@ bun dev              # http://localhost:8888
 
 ### Status Detection: Hooks & Structured APIs over Terminal Parsing
 
-The current terminal output parsing approach (status-parser.ts) is brittle — TUI redraws, stale patterns, and agent UI updates cause false positives. Several agents expose structured status mechanisms that are far more reliable:
+Terminal escape sequence detection (BEL, OSC 9/777) handles the most critical transition (working→waiting) reliably for Claude Code. But the heuristic pattern matching for other transitions and agents is still brittle — TUI redraws, stale patterns, and agent UI updates cause false positives. Several agents expose structured status mechanisms that would be even more reliable:
 
 | Agent | Mechanism | How |
 |---|---|---|

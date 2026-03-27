@@ -36,12 +36,11 @@ namespace Loupedeck.AgentDeckPlugin.Folders
 
         private static readonly (String id, String label, String lucide, BitmapColor color)[] Skills =
         {
-            ("commit",   "Commit",   "check",      new BitmapColor(30, 120, 50)),
-            ("fix",      "Fix",      "wrench",     new BitmapColor(180, 160, 30)),
-            ("test",     "Test",     "test-tube",   new BitmapColor(45, 138, 78)),
-            ("refactor", "Refactor", "refresh-cw",  new BitmapColor(68, 136, 187)),
-            ("review",   "Review",   "eye",         new BitmapColor(136, 85, 187)),
-            ("explain",  "Explain",  "lightbulb",   new BitmapColor(212, 176, 48)),
+            ("commit",     "Commit",    "check",       new BitmapColor(30, 120, 50)),
+            ("restart",    "Restart",   "rotate-ccw",  new BitmapColor(217, 119, 6)),
+            ("checkpoint", "Chkpt",     "hash",        new BitmapColor(50, 100, 180)),
+            ("diff",       "Diff",      "eye",         new BitmapColor(136, 85, 187)),
+            ("continue",   "Continue",  "play",        new BitmapColor(30, 120, 50)),
         };
 
         private static readonly (String id, String label, String lucide, BitmapColor color)[] MenuActions =
@@ -65,8 +64,8 @@ namespace Loupedeck.AgentDeckPlugin.Folders
 
         public AgentDashboardFolder()
         {
-            this.DisplayName = "AgentDeck";
-            this.GroupName = "AgentDeck";
+            this.DisplayName = "Agent Deck";
+            this.GroupName = "Agents";
         }
 
         public override PluginDynamicFolderNavigation GetNavigationArea(DeviceType _)
@@ -240,12 +239,16 @@ namespace Loupedeck.AgentDeckPlugin.Folders
 
             var a = this.Plugin.State.GetSelectedAgent();
             if (a == null) { GoBack(); return; }
-            // pos 0-4 = skills 0-4, pos 5 = BACK, pos 6 = skill 5 (explain), pos 7 = custom
-            if (pos < 5) { _ = this.Plugin.BridgeClient.SendSkill(a.Id, Skills[pos].id); GoBack(); }
-            else switch (pos)
+            // pos 0-4 = management actions, pos 5 = BACK, pos 6 = MODE, pos 7 = END
+            switch (pos)
             {
+                case 0: _ = this.Plugin.BridgeClient.SendSkill(a.Id, "commit"); GoBack(); break;
+                case 1: _ = this.Plugin.BridgeClient.SendCommand(a.Id, "restart"); GoBack(); break;
+                case 2: _ = this.Plugin.BridgeClient.SendCommand(a.Id, "checkpoint"); break;
+                case 3: _ = this.Plugin.BridgeClient.SendFocusView("diff", a.Id); break;
+                case 4: _ = this.Plugin.BridgeClient.SendSkill(a.Id, "custom", "continue"); GoBack(); break;
                 case 5: GoBack(); break;
-                case 6: _ = this.Plugin.BridgeClient.SendSkill(a.Id, Skills[5].id); GoBack(); break;
+                case 6: _ = this.Plugin.BridgeClient.SendCommand(a.Id, "cycle_mode"); break;
                 case 7: _ = this.Plugin.BridgeClient.SendCommand(a.Id, "kill"); GoBack(); break;
             }
         }
@@ -256,7 +259,7 @@ namespace Loupedeck.AgentDeckPlugin.Folders
             return pos switch
             {
                 5 => TileCtrl("chevron-left", "BACK", new BitmapColor(50, 50, 50), sz),
-                6 => TileCtrl(Skills[5].lucide, Skills[5].label, Skills[5].color, sz),
+                6 => TileCtrl("settings", "MODE", new BitmapColor(45, 138, 120), sz),
                 7 => TileCtrl("icon-x", "END", new BitmapColor(180, 40, 40), sz),
                 _ => Empty(sz)
             };

@@ -97,13 +97,17 @@ Navigate and act without looking at the keyboard:
 [YES ✓]              [NO ✗]
 ```
 
+### Instant Status Detection
+
+AgentDeck detects agent state changes using standard terminal escape sequences. When Claude Code needs approval, it sends a terminal bell character. AgentDeck intercepts this instantly — no polling, no delay. Your console tile turns yellow and your MX Master 4 buzzes the moment the agent needs you.
+
 ### MX Master 4 Haptics — Ambient Awareness
 
 | Event | Feedback |
 |-------|----------|
-| Agent needs approval | 3 short pulses |
-| Task completed | 1 long pulse |
-| Error occurred | Rapid vibration |
+| Agent needs approval | Haptic buzz (instant via BEL detection) |
+| Task completed | Haptic pulse |
+| Error occurred | Haptic alert |
 
 *Feel when something needs attention—even when you're not looking.*
 
@@ -427,49 +431,43 @@ AgentDeck sits on your desk, visible in peripheral vision
 
 ## Logi Actions — All Assignable Actions
 
-All actions below are standalone `PluginDynamicCommand` instances. Assign any of them to MX Creative Console keypad buttons, dialpad keys, or MX Master 4 Actions Ring slots via Logi Options+. Tiles render with Lucide icons and dim when inactive.
+Assign these to MX Creative Console keypad, dialpad keys, or MX Master 4 Actions Ring via Logi Options+.
 
 ### Dynamic Folder
 
-| Action | Description |
-|--------|-------------|
-| **AgentDeck Dashboard** | Takes over all 9 LCD buttons. Dashboard shows agent tiles, skills page (via double-tap), new agent picker, and menu. |
+| Action | Group | Description |
+|--------|-------|-------------|
+| **Agent Deck** | Agents | Takes over all 9 LCD buttons. Dashboard with agent tiles, management page (double-tap), new agent picker, and menu. |
 
-### Agents
+**Double-tap management page** (per-agent actions):
 
-| Action | Description |
-|--------|-------------|
-| **Agent Slot** (x6) | Shows agent status tile for slot 1-6. Tap to select agent. |
-| **Quick Launch** (x5) | One-tap launch of Claude, Gemini, Codex, Aider, or OpenCode in current workspace. |
+| Tile | Action | What it does |
+|------|--------|-------------|
+| Commit | Send commit prompt | Asks agent to commit current changes |
+| Restart | Kill + relaunch | Same type, same project, re-creates worktree if needed |
+| Checkpoint | Git tag save point | `git tag agentdeck/checkpoint/{id}/{timestamp}` |
+| Diff | Open diff view | Shows this agent's changed files in VS Code |
+| Continue | Send "continue" | Nudges agent to keep going |
+| Mode | Cycle permission mode | Sends Shift+Tab (ask → auto → plan for Claude/Codex) |
+| End | Kill session | Terminates the agent |
 
-### Controls
+### Standalone Commands
 
-| Action | Icon | Description |
-|--------|------|-------------|
-| **Approve** | check (green) | Approve first waiting agent |
-| **Reject** | X (red) | Reject first waiting agent |
-| **Approve All** | check (green) | Batch approve all waiting agents. Shows count. |
-| **Pause Agent** | circle-pause (brown) | Send Ctrl+C to selected agent |
-| **Resume Agent** | play (green) | Send Enter to nudge selected agent |
-| **Restart Agent** | rotate-ccw (orange) | Kill and relaunch selected agent (same type/project) |
-| **Kill Agent** | X (red) | Terminate selected agent |
-| **Undo** | undo-2 (red-orange) | Send `/undo` to Claude, `git checkout .` for others |
-| **Checkpoint** | hash (blue) | Create git tag as save point in agent's worktree |
-| **Quick Prompt** | terminal (blue) | Open VS Code input box to send custom message to agent |
-| **Send File** | code (blue) | Open file picker, send path to agent |
-| **Open Diff** | eye (purple) | Open diff view for selected agent |
-| **Toggle Sidebar** | menu (gray) | Show/hide AgentDeck sidebar in VS Code |
-| **New Agent** | plus | Launch new agent (opens type picker) |
-| **Status** | count | Shows session count with status dots |
+| Action | Group | Description |
+|--------|-------|-------------|
+| **Quick Launch** | Agents | Launch agent with dropdown selector (Claude, Gemini, Codex, Aider, OpenCode) |
+| **Agent Status** | Agents | Fleet overview tile — agent count with colored status dots |
+| **Cycle Agent** | Navigation | Rotate selection to next agent + focus terminal |
+| **Next Waiting** | Navigation | Jump to next waiting agent. Shows waiting count. |
+| **Approve All** | Controls | Batch approve all waiting agents |
 
-### Navigation
+### Dial / Adjustment Actions
 
-| Action | Icon | Description |
-|--------|------|-------------|
-| **Cycle Agent** | chevron-right (blue) | Rotate selection to next agent + focus terminal |
-| **Next Waiting** | circle-dot (yellow) | Focus next waiting agent. Shows waiting count. |
-| **Agent Dial** | — | Context-aware: rotate cycles agents on dashboard, press focuses terminal |
-| **Agent Roller** | — | Always cycles through agents + focuses terminal |
+| Action | Group | Rotate | Press |
+|--------|-------|--------|-------|
+| **Agent Selector** | Navigation | Cycle through agents on dashboard | Focus selected agent's terminal |
+| **Effort Level** | Controls | Cycle `/effort low/medium/high` on selected agent | Reset to medium |
+| **Permission Mode** | Controls | Send Shift+Tab to cycle ask/auto/plan mode | Send one Shift+Tab |
 
 ### Haptics (MX Master 4)
 
