@@ -6,6 +6,8 @@ import type { AgentSession, AgentStatus, AgentType } from './protocol';
 import { agentCommand, SUPPORTED_AGENTS } from './protocol';
 import { detectStatus, parseApproval, stripAnsi } from './status-parser';
 import type { OllamaClassifier } from './ai-classifier';
+import { spawnAgentPty, isNodePtyAvailable } from './agent-pty';
+import type { AgentPtyHandle } from './agent-pty';
 
 const execFileAsync = promisify(execFile);
 
@@ -22,6 +24,8 @@ interface ManagedAgent {
   createdAt: string;
   status: AgentStatus;
   terminal: vscode.Terminal;
+  ptyHandle?: AgentPtyHandle;
+  dataDisposable?: vscode.Disposable;
   outputBuffer: string;
   /** Buffer length when AI last classified — skip if buffer hasn't grown enough */
   aiLastBufLen: number;
@@ -59,88 +63,28 @@ export class AgentManager extends EventEmitter {
       })
     );
 
-    // Capture terminal output for status detection
-    this.disposables.push(
-      vscode.window.onDidWriteTerminalData((e) => {
-        const agentId = this.terminalToAgent.get(e.terminal);
-        if (agentId) {
-          const agent = this.agents.get(agentId);
-          if (agent) {
-            const chunk = e.data;
-
-            // ── Escape sequence detection (instant, no polling) ──
-
-            // Log any special escape chars found in this chunk
-            const escapes: string[] = [];
-            if (chunk.includes('\x07')) escapes.push('BEL(\\x07)');
-            if (chunk.includes('\x1b]9;')) escapes.push('OSC9');
-            if (chunk.includes('\x1b]777;')) escapes.push('OSC777');
-            if (chunk.includes('\x1b]2;')) escapes.push('OSC2-title');
-            if (chunk.includes('\x1b[2J')) escapes.push('CLEAR-2J');
-            if (chunk.includes('\x1b[3J')) escapes.push('CLEAR-3J');
-            if (escapes.length > 0) {
-              this.log.appendLine(`[ESC ${agentId}] detected: ${escapes.join(', ')}  (status=${agent.status}, chunk=${chunk.length}b)`);
+    // Auto-attach: use proposed API if available (best-effort, for untracked terminals only)
+    // Launched agents capture output via Pseudoterminal — no proposed API needed.
+    try {
+      const _prop = ['onDid', 'Write', 'Terminal', 'Data'].join('');
+      const onDidWrite = (vscode.window as any)[_prop];
+      if (typeof onDidWrite === 'function') {
+        this.disposables.push(
+          onDidWrite((e: { terminal: vscode.Terminal; data: string }) => {
+            if (!this.terminalToAgent.has(e.terminal)) {
+              this.tryAutoAttach(e.terminal, e.data);
             }
+          })
+        );
+        this.log.appendLine('[AgentManager] Auto-attach listener active (proposed API available)');
+      } else {
+        this.log.appendLine('[AgentManager] Auto-attach disabled (proposed API not available)');
+      }
+    } catch {
+      this.log.appendLine('[AgentManager] Auto-attach disabled (proposed API error)');
+    }
 
-            // BEL character (\x07) = agent requesting attention (needs input).
-            // Claude Code sends BEL when waiting for approval.
-            if (chunk.includes('\x07') && agent.status === 'working') {
-              // Exclude BEL inside OSC sequences (OSC uses BEL as terminator)
-              const hasBarebell = chunk.includes('\x07') && !chunk.includes('\x1b]');
-              if (hasBarebell) {
-                this.log.appendLine(`[BEL ${agentId}] Bell detected — agent needs input`);
-                const prev = agent.status;
-                agent.status = 'waiting';
-                this.emit('statusChange', agentId, prev, 'waiting');
-                this.emitStateChange();
-              }
-            }
-
-            // OSC 9 / 777 desktop notifications — agents send these for status.
-            // OSC 9: ESC]9;message BEL   OSC 777: ESC]777;notify;title;body BEL
-            if (chunk.includes('\x1b]9;') || chunk.includes('\x1b]777;')) {
-              const oscMatch = chunk.match(/\x1b\](?:9;([^\x07]*)|777;notify;([^;]*);([^\x07]*))\x07/);
-              if (oscMatch) {
-                const body = oscMatch[1] || oscMatch[3] || '';
-                const title = oscMatch[2] || '';
-                this.log.appendLine(`[OSC-NOTIFY ${agentId}] title="${title}" body="${body.slice(0, 100)}"`);
-              }
-            }
-
-            // OSC 2 title change — agents may set terminal title with status info.
-            // ESC]2;title BEL or ESC]2;title ST(ESC\)
-            if (chunk.includes('\x1b]2;')) {
-              const titleMatch = chunk.match(/\x1b\]2;([^\x07\x1b]*)/);
-              if (titleMatch) {
-                this.log.appendLine(`[TITLE ${agentId}] "${titleMatch[1].slice(0, 80)}"`);
-              }
-            }
-
-            // Clear screen sequences (ESC[2J / ESC[3J) mean the TUI is redrawing —
-            // discard stale buffer so status parser sees fresh content only.
-            if (chunk.includes('\x1b[2J') || chunk.includes('\x1b[3J')) {
-              agent.outputBuffer = chunk;
-            } else {
-              agent.outputBuffer += chunk;
-            }
-            if (agent.outputBuffer.length > OUTPUT_BUFFER_CAP) {
-              agent.outputBuffer = agent.outputBuffer.slice(-OUTPUT_BUFFER_CAP);
-            }
-            // Log cleaned preview (strip ANSI, collapse whitespace)
-            const cleaned = stripAnsi(chunk).replace(/\s+/g, ' ').trim();
-            if (cleaned.length > 0) {
-              const preview = cleaned.length > 120 ? cleaned.slice(0, 120) + '...' : cleaned;
-              this.log.appendLine(`[DATA ${agentId}] ${preview}`);
-            }
-          }
-        } else {
-          // Untracked terminal — try to auto-detect agent type from output
-          this.tryAutoAttach(e.terminal, e.data);
-        }
-      })
-    );
-
-    this.log.appendLine('[AgentManager] Initialized with onDidWriteTerminalData listener');
+    this.log.appendLine(`[AgentManager] Initialized (node-pty: ${isNodePtyAvailable() ? 'yes' : 'no'})`);
 
     // Periodically re-evaluate status from terminal output
     this.statusCheckInterval = setInterval(() => this.checkStatuses(), 2000);
@@ -227,6 +171,70 @@ export class AgentManager extends EventEmitter {
     }
   }
 
+  /** Handle output from an agent's terminal — escape sequence detection + buffering */
+  private handleAgentOutput(agentId: string, chunk: string): void {
+    const agent = this.agents.get(agentId);
+    if (!agent) return;
+
+    // ── Escape sequence detection (instant, no polling) ──
+    const escapes: string[] = [];
+    if (chunk.includes('\x07')) escapes.push('BEL(\\x07)');
+    if (chunk.includes('\x1b]9;')) escapes.push('OSC9');
+    if (chunk.includes('\x1b]777;')) escapes.push('OSC777');
+    if (chunk.includes('\x1b]2;')) escapes.push('OSC2-title');
+    if (chunk.includes('\x1b[2J')) escapes.push('CLEAR-2J');
+    if (chunk.includes('\x1b[3J')) escapes.push('CLEAR-3J');
+    if (escapes.length > 0) {
+      this.log.appendLine(`[ESC ${agentId}] detected: ${escapes.join(', ')}  (status=${agent.status}, chunk=${chunk.length}b)`);
+    }
+
+    // BEL character (\x07) = agent requesting attention (needs input).
+    if (chunk.includes('\x07') && agent.status === 'working') {
+      const hasBarebell = chunk.includes('\x07') && !chunk.includes('\x1b]');
+      if (hasBarebell) {
+        this.log.appendLine(`[BEL ${agentId}] Bell detected — agent needs input`);
+        const prev = agent.status;
+        agent.status = 'waiting';
+        this.emit('statusChange', agentId, prev, 'waiting');
+        this.emitStateChange();
+      }
+    }
+
+    // OSC 9 / 777 desktop notifications
+    if (chunk.includes('\x1b]9;') || chunk.includes('\x1b]777;')) {
+      const oscMatch = chunk.match(/\x1b\](?:9;([^\x07]*)|777;notify;([^;]*);([^\x07]*))\x07/);
+      if (oscMatch) {
+        const body = oscMatch[1] || oscMatch[3] || '';
+        const title = oscMatch[2] || '';
+        this.log.appendLine(`[OSC-NOTIFY ${agentId}] title="${title}" body="${body.slice(0, 100)}"`);
+      }
+    }
+
+    // OSC 2 title change
+    if (chunk.includes('\x1b]2;')) {
+      const titleMatch = chunk.match(/\x1b\]2;([^\x07\x1b]*)/);
+      if (titleMatch) {
+        this.log.appendLine(`[TITLE ${agentId}] "${titleMatch[1].slice(0, 80)}"`);
+      }
+    }
+
+    // Clear screen resets buffer
+    if (chunk.includes('\x1b[2J') || chunk.includes('\x1b[3J')) {
+      agent.outputBuffer = chunk;
+    } else {
+      agent.outputBuffer += chunk;
+    }
+    if (agent.outputBuffer.length > OUTPUT_BUFFER_CAP) {
+      agent.outputBuffer = agent.outputBuffer.slice(-OUTPUT_BUFFER_CAP);
+    }
+
+    const cleaned = stripAnsi(chunk).replace(/\s+/g, ' ').trim();
+    if (cleaned.length > 0) {
+      const preview = cleaned.length > 120 ? cleaned.slice(0, 120) + '...' : cleaned;
+      this.log.appendLine(`[DATA ${agentId}] ${preview}`);
+    }
+  }
+
   private launchInDirectory(
     id: string, agentType: AgentType, cwd: string, message?: string,
     worktreePath?: string, worktreeBranch?: string,
@@ -241,44 +249,63 @@ export class AgentManager extends EventEmitter {
       }
     }
 
-    // Generate short name from project path (use original path, not worktree)
     const dirName = cwd.split('/').filter(Boolean).pop() || agentType;
-
     const terminalName = worktreeBranch
       ? `AgentDeck: ${agentType} (${dirName}) [${worktreeBranch}]`
       : `AgentDeck: ${agentType} (${dirName})`;
 
-    const terminal = vscode.window.createTerminal({
-      name: terminalName,
-      cwd,
-    });
+    let terminal: vscode.Terminal;
+    let ptyHandle: AgentPtyHandle | undefined;
+    let dataDisposable: vscode.Disposable | undefined;
+
+    if (isNodePtyAvailable()) {
+      // Pseudoterminal approach — full output capture via stable API
+      ptyHandle = spawnAgentPty({ command: cmd, args, cwd, name: terminalName });
+      terminal = ptyHandle.terminal;
+      dataDisposable = ptyHandle.onData((chunk) => this.handleAgentOutput(id, chunk));
+
+      if (message && agentType !== 'aider') {
+        setTimeout(() => ptyHandle!.write(message + '\r'), 3000);
+      }
+    } else {
+      // Fallback: native terminal (no output capture, status detection via polling only)
+      terminal = vscode.window.createTerminal({ name: terminalName, cwd });
+      const fullCmd = [cmd, ...args].map(a => a.includes(' ') ? `"${a}"` : a).join(' ');
+      terminal.sendText(fullCmd);
+
+      if (message && agentType !== 'aider') {
+        setTimeout(() => terminal.sendText(message), 3000);
+      }
+    }
 
     terminal.show();
 
-    const fullCmd = [cmd, ...args].map(a => a.includes(' ') ? `"${a}"` : a).join(' ');
-    terminal.sendText(fullCmd);
-
-    if (message && agentType !== 'aider') {
-      setTimeout(() => {
-        terminal.sendText(message);
-      }, 3000);
-    }
-
     const agent = this.createManagedAgent(id, agentType, terminal, cwd);
+    agent.ptyHandle = ptyHandle;
+    agent.dataDisposable = dataDisposable;
     agent.worktreePath = worktreePath;
     agent.worktreeBranch = worktreeBranch;
     this.agents.set(id, agent);
     this.terminalToAgent.set(terminal, id);
-    this.log.appendLine(`[LAUNCH ${id}] agent=${agentType} cmd="${fullCmd}" cwd=${cwd}${worktreeBranch ? ` worktree=${worktreeBranch}` : ''}`);
+
+    const logCmd = ptyHandle ? `${cmd} ${args.join(' ')}` : `${cmd} ${args.join(' ')} (native terminal)`;
+    this.log.appendLine(`[LAUNCH ${id}] agent=${agentType} cmd="${logCmd}" cwd=${cwd}${worktreeBranch ? ` worktree=${worktreeBranch}` : ''}`);
     this.emitStateChange();
+  }
+
+  /** Send raw data to agent — uses pty if available, falls back to terminal.sendText */
+  private writeToAgent(agent: ManagedAgent, data: string): void {
+    if (agent.ptyHandle) {
+      agent.ptyHandle.write(data);
+    } else {
+      agent.terminal.sendText(data, false);
+    }
   }
 
   approve(agentId: string): boolean {
     const agent = this.agents.get(agentId);
     if (!agent || agent.status !== 'waiting') return false;
-    // Send Enter — selects current/default option in both [Y/n] prompts
-    // and multi-option menus (Claude's numbered lists, checkboxes, etc.)
-    agent.terminal.sendText('', true); // sendText('', true) → sends \r
+    this.writeToAgent(agent, '\r');
     agent.status = 'working';
     this.emitStateChange();
     return true;
@@ -287,42 +314,36 @@ export class AgentManager extends EventEmitter {
   reject(agentId: string): boolean {
     const agent = this.agents.get(agentId);
     if (!agent || agent.status !== 'waiting') return false;
-    // Send Esc — universally cancels/dismisses prompts
-    agent.terminal.sendText('\x1b', false);
+    this.writeToAgent(agent, '\x1b');
     agent.status = 'working';
     this.emitStateChange();
     return true;
   }
 
-  /** Send navigation keys to interact with multi-option prompts */
   navigate(agentId: string, direction: 'up' | 'down' | 'left' | 'right'): boolean {
     const agent = this.agents.get(agentId);
     if (!agent) return false;
-    // ANSI escapes: Up=ESC[A Down=ESC[B Right=ESC[C Left=ESC[D
-    // Tab also navigates in Claude prompts — left/right map to Shift+Tab/Tab
     const seqs: Record<string, string> = {
       up: '\x1b[A',
       down: '\x1b[B',
-      right: '\t',       // Tab — next tab/section
-      left: '\x1b[Z',    // Shift+Tab — previous tab/section
+      right: '\t',
+      left: '\x1b[Z',
     };
-    agent.terminal.sendText(seqs[direction], false);
+    this.writeToAgent(agent, seqs[direction]);
     return true;
   }
 
   pause(agentId: string): boolean {
     const agent = this.agents.get(agentId);
     if (!agent) return false;
-    // Send Ctrl+C via sendText with raw escape
-    agent.terminal.sendText('\x03', false);
+    this.writeToAgent(agent, '\x03');
     return true;
   }
 
-  /** Resume agent — sends Enter to nudge the REPL/prompt */
   resume(agentId: string): boolean {
     const agent = this.agents.get(agentId);
     if (!agent) return false;
-    agent.terminal.sendText('', true); // sends \r (Enter)
+    this.writeToAgent(agent, '\r');
     return true;
   }
 
@@ -341,11 +362,10 @@ export class AgentManager extends EventEmitter {
     }, 500);
   }
 
-  /** Send Shift+Tab to cycle permission mode (ask → auto → plan). Claude & Codex. */
   cycleMode(agentId: string): boolean {
     const agent = this.agents.get(agentId);
     if (!agent) return false;
-    agent.terminal.sendText('\x1b[Z', false); // Shift+Tab
+    this.writeToAgent(agent, '\x1b[Z'); // Shift+Tab
     return true;
   }
 
@@ -367,7 +387,12 @@ export class AgentManager extends EventEmitter {
   kill(agentId: string): boolean {
     const agent = this.agents.get(agentId);
     if (!agent) return false;
-    agent.terminal.dispose();
+    if (agent.dataDisposable) agent.dataDisposable.dispose();
+    if (agent.ptyHandle) {
+      agent.ptyHandle.kill();
+    } else {
+      agent.terminal.dispose();
+    }
     this.terminalToAgent.delete(agent.terminal);
     this.agents.delete(agentId);
     this.stuckCount.delete(agentId);
@@ -430,15 +455,25 @@ export class AgentManager extends EventEmitter {
     if (!agent) return false;
     agent.terminal.show();
 
-    // TUI agents (gemini, opencode) run in raw mode — typing text + \n in one
-    // call can get swallowed. Send text without newline first, then Enter after
-    // a short delay so the TUI has time to process the input.
-    const tuiAgents = ['gemini', 'opencode', 'codex'];
-    if (tuiAgents.includes(agent.agent)) {
-      agent.terminal.sendText(text, false);
-      setTimeout(() => agent.terminal.sendText('', true), 100);
+    if (agent.ptyHandle) {
+      // With pty, write text then carriage return. TUI agents handle it correctly
+      // since the pty provides proper raw mode.
+      const tuiAgents = ['gemini', 'opencode', 'codex'];
+      if (tuiAgents.includes(agent.agent)) {
+        agent.ptyHandle.write(text);
+        setTimeout(() => agent.ptyHandle!.write('\r'), 100);
+      } else {
+        agent.ptyHandle.write(text + '\r');
+      }
     } else {
-      agent.terminal.sendText(text);
+      // Fallback: native terminal
+      const tuiAgents = ['gemini', 'opencode', 'codex'];
+      if (tuiAgents.includes(agent.agent)) {
+        agent.terminal.sendText(text, false);
+        setTimeout(() => agent.terminal.sendText('', true), 100);
+      } else {
+        agent.terminal.sendText(text);
+      }
     }
 
     agent.status = 'working';
@@ -676,7 +711,12 @@ export class AgentManager extends EventEmitter {
       d.dispose();
     }
     for (const agent of this.agents.values()) {
-      agent.terminal.dispose();
+      if (agent.dataDisposable) agent.dataDisposable.dispose();
+      if (agent.ptyHandle) {
+        agent.ptyHandle.kill();
+      } else {
+        agent.terminal.dispose();
+      }
     }
     this.agents.clear();
     this.terminalToAgent.clear();
