@@ -305,6 +305,7 @@ export class AgentManager extends EventEmitter {
     }
 
     terminal.show();
+    this.focusEditorWindow();
 
     const agent = this.createManagedAgent(id, agentType, terminal, cwd);
     agent.ptyHandle = ptyHandle;
@@ -426,48 +427,42 @@ export class AgentManager extends EventEmitter {
     return true;
   }
 
+  /** Bring the editor window to foreground via OS-level focus (osascript/powershell) */
+  private focusEditorWindow(): void {
+    if (process.platform === 'darwin') {
+      const folders = vscode.workspace.workspaceFolders;
+      const projectName = folders?.[0]?.name || '';
+      const bundleId = vscode.env.uriScheme || 'vscode';
+      this.log.appendLine(`[FOCUS] bundleId="${bundleId}" projectName="${projectName}"`);
+      execFile('osascript', ['-e',
+        `tell application "System Events"\n` +
+        `  set matchedProcs to every process whose bundle identifier contains "${bundleId}"\n` +
+        `  if (count of matchedProcs) = 0 then return "no process"\n` +
+        `  set p to item 1 of matchedProcs\n` +
+        `  set frontmost of p to true\n` +
+        `  repeat with w in (every window of p)\n` +
+        `    if name of w contains "${projectName}" then\n` +
+        `      perform action "AXRaise" of w\n` +
+        `      return "ok"\n` +
+        `    end if\n` +
+        `  end repeat\n` +
+        `end tell`
+      ], (err) => {
+        if (err) {
+          this.log.appendLine(`[FOCUS] osascript error: ${err.message}`);
+        }
+      });
+    } else if (process.platform === 'win32') {
+      const appName = vscode.env.appName || 'Code';
+      execFile('powershell', ['-Command',
+        `(New-Object -ComObject WScript.Shell).AppActivate("${appName}")`]);
+    }
+  }
+
   showTerminal(agentId: string): void {
     const agent = this.agents.get(agentId);
     if (agent) {
-      // Bring the correct editor window to foreground by matching window title.
-      // Use the agent's project folder name (last path segment) to find the right window.
-      if (process.platform === 'darwin') {
-        const appName = vscode.env.appName || 'Visual Studio Code';
-        // Use workspace folder name for window matching (not worktree/cwd path)
-        const folders = vscode.workspace.workspaceFolders;
-        const projectName = folders?.[0]?.name || agent.projectPath.split('/').filter(Boolean).pop() || '';
-        this.log.appendLine(`[FOCUS] appName="${appName}" projectName="${projectName}"`);
-        // Two-step approach:
-        // 1. tell application (by display name) → activate + set index (brings window forward)
-        // 2. tell System Events → find by app name (not frontmost) → AXRaise (ensures correct window on top)
-        // Use System Events + bundle identifier for reliable window focus
-        // Works across VS Code (com.microsoft.VSCode), Windsurf (com.exafunction.windsurf), Cursor, etc.
-        // Electron-based editors register as "Electron" process, so we can't match by app name.
-        const bundleId = vscode.env.uriScheme || 'vscode';
-        execFile('osascript', ['-e',
-          `tell application "System Events"\n` +
-          `  -- Find process by bundle ID (handles Electron-based editors)\n` +
-          `  set matchedProcs to every process whose bundle identifier contains "${bundleId}"\n` +
-          `  if (count of matchedProcs) = 0 then return "no process"\n` +
-          `  set p to item 1 of matchedProcs\n` +
-          `  set frontmost of p to true\n` +
-          `  repeat with w in (every window of p)\n` +
-          `    if name of w contains "${projectName}" then\n` +
-          `      perform action "AXRaise" of w\n` +
-          `      return "ok"\n` +
-          `    end if\n` +
-          `  end repeat\n` +
-          `end tell`
-        ], (err) => {
-          if (err) {
-            this.log.appendLine(`[FOCUS] osascript error: ${err.message}`);
-          }
-        });
-      } else if (process.platform === 'win32') {
-        const appName = vscode.env.appName || 'Code';
-        execFile('powershell', ['-Command',
-          `(New-Object -ComObject WScript.Shell).AppActivate("${appName}")`]);
-      }
+      this.focusEditorWindow();
       agent.terminal.show();
     }
   }
