@@ -11,7 +11,7 @@ namespace Loupedeck.AgentDeckPlugin
         public override Boolean HasNoApplication => true;
 
         internal PluginState State { get; private set; } = new PluginState();
-        internal BridgeClient BridgeClient { get; private set; }
+        internal BridgeMultiClient BridgeClient { get; private set; }
         internal AgentDashboardFolder ActiveFolder { get; set; }
 
         private BridgeLauncher _bridgeLauncher;
@@ -44,16 +44,18 @@ namespace Loupedeck.AgentDeckPlugin
             this.PluginEvents.AddEvent("agent_completed", "Agent Completed", "An agent finished its task");
             this.PluginEvents.AddEvent("agent_error", "Agent Error", "An agent encountered an error");
 
-            // Connect to bridge WebSocket
-            this.BridgeClient = new BridgeClient();
+            // Connect to bridge WebSocket (scans ports 9999-10008 for all open windows)
+            this.BridgeClient = new BridgeMultiClient();
 
             this.BridgeClient.OnStateUpdate += (state) =>
             {
                 var selectedId = this.State.SelectedAgentId;
                 var worktreeEnabled = this.State.WorktreeEnabled;
+                var windowCount = state.ConnectedWindowCount;
                 this.State = state;
                 this.State.SelectedAgentId = selectedId;
                 this.State.WorktreeEnabled = worktreeEnabled;
+                this.State.ConnectedWindowCount = windowCount;
                 this.RefreshAll();
                 this.NotifyDashboardFolders();
             };

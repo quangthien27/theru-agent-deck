@@ -9,15 +9,17 @@ import { DiffViewer } from './diff-viewer';
 import type { ClientMessage, AgentStatus } from './protocol';
 import { AGENT_SKILLS } from './protocol';
 
-const WS_PORT = 9999;
+const WS_PORT_BASE = 9999;
+const WS_PORT_MAX = 10008;
 
 let agentManager: AgentManager;
 let wsServer: WSServer;
 let sidebarProvider: AgentSidebarProvider;
 let statusBarItem: vscode.StatusBarItem;
 let diffViewer: DiffViewer;
+let boundPort = 0;
 
-export function activate(context: vscode.ExtensionContext) {
+export async function activate(context: vscode.ExtensionContext) {
   const sessionsLog = vscode.window.createOutputChannel('AgentDeck Sessions');
   const aiLog = vscode.window.createOutputChannel('AgentDeck AI');
   context.subscriptions.push(sessionsLog, aiLog);
@@ -64,12 +66,44 @@ export function activate(context: vscode.ExtensionContext) {
   updateStatusBar([]);
   statusBarItem.show();
 
-  // ── WebSocket Server ───────────────────────────────────
+  // ── WebSocket Server (port scanning) ─────────────────
   wsServer = new WSServer();
-  wsServer.start(WS_PORT);
+  for (let port = WS_PORT_BASE; port <= WS_PORT_MAX; port++) {
+    try {
+      boundPort = await wsServer.start(port);
+      sessionsLog.appendLine(`WebSocket server bound to :${boundPort}`);
+      break;
+    } catch (err: any) {
+      if (err.code === 'EADDRINUSE') {
+        sessionsLog.appendLine(`Port ${port} in use, trying next...`);
+        continue;
+      }
+      throw err;
+    }
+  }
+
+  if (!boundPort) {
+    vscode.window.showErrorMessage('AgentDeck: No available port in range 9999-10008');
+    return;
+  }
+
+  // Tell AgentManager which port we're on (for prefixed agent IDs)
+  agentManager.setPort(boundPort);
+
   wsServer.setMessageHandler((msg: ClientMessage) => {
     handleClientMessage(msg);
   });
+
+  // ── Window focus tracking ────────────────────────────
+  // Broadcast to Logi plugin when this window gains focus,
+  // so it knows where to route new agent launches.
+  context.subscriptions.push(
+    vscode.window.onDidChangeWindowState(e => {
+      if (e.focused && wsServer) {
+        wsServer.broadcast({ type: 'window_focus', port: boundPort });
+      }
+    }),
+  );
 
   // ── State broadcast ────────────────────────────────────
   agentManager.on('stateChange', (agents) => {
@@ -117,7 +151,7 @@ export function activate(context: vscode.ExtensionContext) {
     { dispose: () => sidebarProvider.dispose() },
   );
 
-  sessionsLog.appendLine(`AgentDeck activated. WebSocket server on :${WS_PORT}`);
+  sessionsLog.appendLine(`AgentDeck activated. WebSocket server on :${boundPort}`);
 
   } catch (err: any) {
     sessionsLog.appendLine(`[AgentDeck] Activation error: ${err.message}\n${err.stack}`);

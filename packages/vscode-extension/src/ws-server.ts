@@ -6,9 +6,29 @@ export class WSServer {
   private clients = new Set<WebSocket>();
   private lastState: StateUpdate | null = null;
   private onMessage: ((msg: ClientMessage) => void) | null = null;
+  private boundPort = 0;
 
-  start(port: number): void {
-    this.wss = new WebSocketServer({ port });
+  /** Start the server on the given port. Resolves with bound port, rejects on EADDRINUSE. */
+  start(port: number): Promise<number> {
+    return new Promise((resolve, reject) => {
+      const server = new WebSocketServer({ port });
+
+      server.on('listening', () => {
+        this.wss = server;
+        this.boundPort = port;
+        this.setupConnectionHandler();
+        resolve(port);
+      });
+
+      server.on('error', (err: NodeJS.ErrnoException) => {
+        server.close();
+        reject(err);
+      });
+    });
+  }
+
+  private setupConnectionHandler(): void {
+    if (!this.wss) return;
 
     this.wss.on('connection', (ws) => {
       this.clients.add(ws);
@@ -37,13 +57,17 @@ export class WSServer {
     });
   }
 
+  getPort(): number {
+    return this.boundPort;
+  }
+
   setMessageHandler(handler: (msg: ClientMessage) => void): void {
     this.onMessage = handler;
   }
 
-  broadcast(message: ServerMessage): void {
-    if (message.type === 'state') {
-      this.lastState = message;
+  broadcast(message: ServerMessage | Record<string, any>): void {
+    if ((message as any).type === 'state') {
+      this.lastState = message as StateUpdate;
     }
 
     const data = JSON.stringify(message);

@@ -11,7 +11,6 @@ namespace Loupedeck.AgentDeckPlugin.Services
 
     public class BridgeClient : IDisposable
     {
-        private const String DefaultUrl = "ws://localhost:9999";
         private const Int32 ReconnectDelayMs = 3000;
         private const Int32 BufferSize = 8192;
 
@@ -21,17 +20,21 @@ namespace Loupedeck.AgentDeckPlugin.Services
         private readonly String _url;
         private readonly JsonSerializerOptions _jsonOptions;
 
+        public Int32 Port { get; }
+
         public event Action<PluginState> OnStateUpdate;
         public event Action<String, String> OnAgentEvent; // agentId, eventType
         public event Action<Boolean> OnSettingsUpdate; // worktreeEnabled
+        public event Action<Int32, String> OnWindowFocus; // port, raw json
         public event Action OnConnected;
         public event Action OnDisconnected;
 
         public Boolean IsConnected => _socket?.State == WebSocketState.Open;
 
-        public BridgeClient(String url = null)
+        public BridgeClient(Int32 port = 9999)
         {
-            _url = url ?? DefaultUrl;
+            this.Port = port;
+            _url = $"ws://localhost:{port}";
             _jsonOptions = new JsonSerializerOptions
             {
                 PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -137,6 +140,11 @@ namespace Loupedeck.AgentDeckPlugin.Services
                     case "settings":
                         var worktreeEnabled = doc.RootElement.GetProperty("worktreeEnabled").GetBoolean();
                         OnSettingsUpdate?.Invoke(worktreeEnabled);
+                        break;
+
+                    case "window_focus":
+                        var focusPort = doc.RootElement.GetProperty("port").GetInt32();
+                        OnWindowFocus?.Invoke(focusPort, json);
                         break;
                 }
             }

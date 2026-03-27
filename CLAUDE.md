@@ -35,22 +35,23 @@ No external dependencies — no tmux, no Agent Deck binary, no Bridge process. T
       │  VS Code focuses    │          │                              │
       │  that terminal      │          │                              │
       └──────────┬──────────┘          └──────────────────────────────┘
-                 │ WebSocket :9999                │
-                 │                                │
+                 │ WebSocket :9999-10008          │
+                 │ (per-window port scanning)     │
                  └────────────────────────────────┘
                     Extension IS the server
+                    Each window gets its own port
 ```
 
 ### Why No Bridge / Agent Deck / tmux?
 
 | Need | VS Code Extension handles it |
 |---|---|
-| Spawn agents | `vscode.window.createTerminal({ shellPath: 'claude' })` |
-| Send input (approve/reject) | `terminal.sendText('y')` |
-| Read terminal output | `terminalDataWriteEvent` proposed API — intercept all output |
+| Spawn agents | `node-pty` spawn + `vscode.Pseudoterminal` (stable API) |
+| Send input (approve/reject) | `ptyHandle.write('y')` — direct to process, bypasses VS Code |
+| Read terminal output | `node-pty` data stream via Pseudoterminal — no proposed API needed |
 | Status detection | Parse output patterns (same logic Agent Deck used) |
 | Multi-agent support | Multiple VS Code terminals, tracked in state |
-| Serve Logi Plugin | Built-in WebSocket server on `:9999` |
+| Serve Logi Plugin | WebSocket server on `:9999-10008` (multi-window port scanning) |
 | Show diffs | Native `vscode.diff` command |
 | Git worktree | `git worktree add` via child_process |
 
@@ -127,6 +128,39 @@ When heuristic pattern matching is uncertain (falls through to `currentStatus`),
 - `agentdeck.ai.model` — defaults to `qwen2.5:0.5b` (0.5B params, ~1GB RAM, fastest)
 
 **Safeguards**: 2s timeout, 3s per-agent debounce, silent fallback on any error. Uses Node `http` module directly (no npm dependency).
+
+### Pseudoterminal Architecture (node-pty)
+
+The extension uses VS Code's bundled `node-pty` + the stable `vscode.Pseudoterminal` API to spawn agent processes and capture their output. This replaces the proposed `terminalDataWriteEvent` API which only works in Extension Development Host mode and is blocked by VS Code/Windsurf/Cursor in production.
+
+**How it works:**
+1. `agent-pty.ts` loads `node-pty` from VS Code's bundled `node_modules.asar` (no npm dependency needed)
+2. `spawnAgentPty()` creates a real PTY process (`xterm-256color`, proper cols/rows) and bridges it to VS Code via `Pseudoterminal`
+3. Output flows: `pty.onData` → `writeEmitter` (VS Code terminal display) + `dataEmitter` (status detection)
+4. Input flows: `handleInput` (user keyboard) or `ptyHandle.write()` (programmatic approve/reject) → `pty.write()`
+
+**Why not `child_process.spawn`?** TUI agents (Claude Code, Gemini, OpenCode) check `isatty()` and require a real PTY for interactive mode. `node-pty` provides this.
+
+**Why not the proposed API?** `terminalDataWriteEvent` requires `enabledApiProposals` in package.json. VS Code scans for this at load time and blocks activation in production mode. Even obfuscating the string access (`['onDid','Write','Terminal','Data'].join('')`) doesn't bypass the check — VS Code also scans compiled `.d.ts` files. The Pseudoterminal approach is the only stable, production-ready solution.
+
+**Auto-attach via Shell Integration API:** When users manually launch agents (typing `claude` in a regular terminal), auto-attach uses VS Code's stable `onDidStartTerminalShellExecution` API (1.93+). It detects agent commands, auto-attaches the terminal, and streams output via `execution.read()` — full status detection (BEL, escape sequences, heuristic parsing) without any proposed API. Shell integration must be enabled in the terminal (default in VS Code/Windsurf).
+
+### Multi-Window Support
+
+Each VS Code/Windsurf window runs its own extension instance with its own WebSocket server. The Logi plugin discovers and connects to all active windows.
+
+**Extension side:**
+- Port scanning: tries 9999→10008 sequentially, takes first available
+- Agent IDs prefixed with port: `w9999-agent-1`, `w10001-agent-2` — globally unique across windows
+- Window focus tracking: broadcasts `{ type: 'window_focus', port }` when window gains focus
+
+**Logi Plugin side:**
+- `BridgeMultiClient` manages one `BridgeClient` per port (10 total, connecting in parallel)
+- State merging: concatenates agent lists from all connected windows into one dashboard
+- Command routing: parses port from agent ID prefix → sends command to correct window's `BridgeClient`
+- Launch routing: `SendLaunch` goes to the **last-focused window** (tracked via `window_focus` messages), falls back to lowest connected port
+
+**Window focus (macOS):** Uses `osascript` with `System Events` + `bundle identifier` to find the correct Electron process. Windsurf/Cursor register as "Electron" process, so matching by app name fails — bundle ID (`com.exafunction.windsurf`, `com.microsoft.VSCode`) is the reliable identifier. Sets `frontmost of p to true` then `AXRaise` on the window matching the workspace name.
 
 ## VS Code Extension Architecture
 
@@ -353,44 +387,41 @@ agentdeck/
 │   │       ├── AgentDeckPlugin.cs
 │   │       ├── AgentDeckPlugin.csproj
 │   │       ├── Adjustments/
-│   │       │   ├── DialAdjustment.cs
-│   │       │   └── RollerAdjustment.cs
+│   │       │   ├── DialAdjustment.cs          # Agent selector dial
+│   │       │   ├── EffortAdjustment.cs        # Effort level dial (low/medium/high)
+│   │       │   └── ModeAdjustment.cs          # Permission mode dial (Shift+Tab)
 │   │       ├── Commands/
-│   │       │   ├── AgentSlotCommand.cs        # Agent tile tap handler
-│   │       │   ├── CustomCommand.cs           # Custom action button
-│   │       │   ├── NewAgentCommand.cs         # NEW button
-│   │       │   └── StatusCommand.cs           # Status overview tile
+│   │       │   ├── AgentStatusCommand.cs      # Fleet status tile (count + dots)
+│   │       │   ├── ApproveAllCommand.cs       # Batch approve all waiting
+│   │       │   ├── CycleAgentCommand.cs       # Rotate agent selection
+│   │       │   ├── NextWaitingCommand.cs      # Jump to next waiting agent
+│   │       │   └── QuickLaunchCommand.cs      # One-tap launch (dropdown selector)
 │   │       ├── Services/
-│   │       │   ├── BridgeClient.cs            # WS client → Extension :9999
+│   │       │   ├── BridgeClient.cs            # WS client → single Extension port
+│   │       │   ├── BridgeMultiClient.cs       # Multi-window: manages N BridgeClients
 │   │       │   ├── BridgeLauncher.cs          # Starts/manages bridge connection
 │   │       │   └── DependencyChecker.cs       # Verifies runtime dependencies
 │   │       ├── Models/
 │   │       │   ├── AgentSession.cs
 │   │       │   └── PluginState.cs
-│   │       └── Helpers/
-│   │           ├── PluginLog.cs
-│   │           └── PluginResources.cs
-│   │       ├── Folders/
-│   │       │   └── AgentDashboardFolder.cs  # Dynamic Folder (main UI — dashboard/skills/new-agent/menu)
-│   │       # NOT YET IMPLEMENTED:
-│   │       # ├── Commands/
-│   │       # │   ├── ApproveCommand.cs        # For Actions Ring
-│   │       # │   ├── RejectCommand.cs
-│   │       # │   ├── NextWaitingCommand.cs
-│   │       # │   ├── KillAgentCommand.cs
-│   │       # │   └── OpenTerminalCommand.cs
-│   │       # └── package/metadata/LoupedeckPackage.yaml  # Default profile
+│   │       ├── Helpers/
+│   │       │   ├── PluginLog.cs
+│   │       │   ├── PluginResources.cs
+│   │       │   └── TileRenderer.cs            # Shared tile rendering (TileCtrl, TileCtrlDimmed)
+│   │       └── Folders/
+│   │           └── AgentDashboardFolder.cs    # Dynamic Folder (dashboard/skills/new-agent/menu)
 │   │
 │   ├── vscode-extension/         # VS Code Extension (TypeScript)
 │   │   ├── package.json          # Extension manifest + contributes
 │   │   ├── tsconfig.json
 │   │   └── src/
-│   │       ├── extension.ts          # Activation, lifecycle
-│   │       ├── agent-manager.ts      # Spawn/kill agents, terminal I/O
+│   │       ├── extension.ts          # Activation, lifecycle, port scanning
+│   │       ├── agent-manager.ts      # Spawn/kill agents via Pseudoterminal
+│   │       ├── agent-pty.ts          # node-pty + Pseudoterminal bridge
 │   │       ├── status-parser.ts      # Parse terminal output for status
 │   │       ├── ai-classifier.ts      # Optional Ollama AI status classifier
 │   │       ├── protocol.ts           # Shared types (AgentSession, commands, events)
-│   │       ├── ws-server.ts          # WebSocket server :9999
+│   │       ├── ws-server.ts          # WebSocket server (async port binding)
 │   │       ├── sidebar-provider.ts   # TreeDataProvider for agent list
 │   │       ├── simulator-webview.ts  # Opens simulator as VS Code webview
 │   │       ├── commands.ts           # Approve, reject, new agent, etc.
@@ -475,6 +506,10 @@ dotnet build -c Debug           # Build plugin DLL
 - **View-switch cooldown**: When navigating between Dynamic Folder views (e.g. double-tap → skills page), block input for ~1 second to prevent accidental third-tap triggering a skill action immediately.
 - **Action symbols** (icons in Logi Options+ action picker): Place SVGs in `package/actionsymbols/` named `{FullNamespace}.{ClassName}.svg` (e.g. `Loupedeck.AgentDeckPlugin.Commands.CycleAgentCommand.svg`). SVGs must be **32x32 viewBox**, use **filled paths with `fill="#E2E2E2"`** (light gray), **no strokes** — Logi+ recolors the `#E2E2E2` fill on hover. Do NOT use `stroke`-based SVGs or `fill="none"` outlines — Logi+ ignores stroke attributes and auto-fills closed shapes with black. Reference official symbols at `/Applications/Utilities/LogiPluginService.app/Contents/MonoBundle/Plugins/DefaultMac/actionsymbols/` for the correct format. Requires service restart to pick up changes. **Note:** `PluginDynamicFolder` does NOT support action symbols — only commands and adjustments get icons in the Logi+ picker.
 - **Creating action symbol SVGs**: Lucide icons are stroke-based but Logi+ needs filled outline paths (32x32, `fill="#E2E2E2"`, `fill-rule="evenodd"`). Workflow: (1) download Lucide SVG from `unpkg.com/lucide-static@latest/icons/{name}.svg` with `curl -sL`, (2) manually convert stroke paths to filled outline paths in a Node.js script — define each icon's paths as arrays of `d` strings, wrap in `<svg width="32" height="32" viewBox="0 0 32 32">` with `<path fill="#E2E2E2" fill-rule="evenodd" clip-rule="evenodd">`. To resize icons within the 32x32 canvas (e.g. 75%), wrap paths in `<g transform="translate(4,4) scale(0.75)">`. See `/tmp/convert_icons.mjs` for the pattern used to generate the current icons.
+- **VS Code proposed APIs break production installs**: `enabledApiProposals` in package.json causes VS Code to block extension activation in production mode (not just Extension Development Host). Even removing the field but keeping the `.d.ts` file in the VSIX triggers the check. Even obfuscating property access in JS doesn't help — VS Code scans compiled output. Solution: use `vscode.Pseudoterminal` + `node-pty` (stable API) instead of `terminalDataWriteEvent`. Add `vscode.proposed.*.d.ts` to `.vscodeignore`.
+- **VSIX must include runtime dependencies**: `.vscodeignore` excludes `node_modules/**` by default. Add `!node_modules/ws/**` (and any other runtime deps) to include them. Without this, the extension fails to activate silently (no error shown, commands just "not found").
+- **Windsurf/Cursor window focus via osascript**: Electron-based editors register their process as "Electron", not by their app name. `tell application "Windsurf"` can't enumerate windows. Use `System Events` with `bundle identifier contains "windsurf"` to find the correct process, then `set frontmost of p to true` + `perform action "AXRaise" of w`. The bundle ID is available via `vscode.env.uriScheme` (returns "windsurf", "cursor", "vscode").
+- **node-pty from VS Code's bundled modules**: Load via `require(path.join(vscode.env.appRoot, 'node_modules.asar', 'node-pty'))`. Falls back to `node_modules/node-pty`. This avoids shipping a native binary in the VSIX. Works in VS Code, Windsurf, Cursor.
 
 ### Simulator
 
@@ -504,10 +539,11 @@ The `releases/` directory is gitignored. The Logi plugin version is set in `pack
 ## Build Phase Deliverables
 
 ### Required — VS Code Extension
-- [x] Agent manager (spawn/kill via terminals, auto-attach)
+- [x] Agent manager (spawn/kill via Pseudoterminal + node-pty, auto-attach via Shell Integration API)
 - [x] Status parser (terminal output → status, 5 agents + generic)
 - [x] AI status classifier (optional Ollama fallback for uncertain detection)
-- [x] WebSocket server (:9999)
+- [x] WebSocket server (port scanning :9999-10008 for multi-window)
+- [x] Multi-window support (per-window port, agent ID prefixing, focus-based launch routing)
 - [x] Sidebar agent list with live status
 - [x] Integrated terminal per agent
 - [x] Commands (approve, reject, new, kill, show terminal, attach)
@@ -517,12 +553,12 @@ The `releases/` directory is gitignored. The Logi plugin version is set in `pack
 
 ### Required — Logi Plugin
 - [x] Plugin scaffolding (AgentDeckPlugin.cs, models, services)
-- [x] BridgeClient (WebSocket connection to extension :9999)
+- [x] BridgeMultiClient (WebSocket connections to all extension windows :9999-10008)
 - [x] Basic commands (AgentSlot, NewAgent, Status, Custom)
 - [x] Dial + roller adjustments
 - [x] Dynamic Folder with agent status tiles — `AgentDashboardFolder.cs` takes over 9 LCD buttons (dashboard/skills/new-agent/menu views)
 - [x] NEW agent flow with agent type picker — 5 agent types + WORKTREE toggle in new-agent view
-- [x] Skills page via double-tap — Commit, Fix, Test, Refactor, Review, Explain + END (any agent status)
+- [x] Skills page via double-tap — Commit, Restart, Chkpt, Diff, Continue, Mode, END (management actions)
 - [x] Window focus — osascript activates correct editor window by workspace name on tile tap
 - [ ] Actions Ring commands (8 quick actions) — only 4 commands exist, missing: Approve, Reject, NextWaiting, Kill, OpenTerminal
 - [ ] Haptic notifications on MX Master 4 — no haptic code

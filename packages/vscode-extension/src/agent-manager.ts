@@ -37,10 +37,16 @@ export class AgentManager extends EventEmitter {
   private agents = new Map<string, ManagedAgent>();
   private terminalToAgent = new Map<vscode.Terminal, string>();
   private nextId = 1;
+  private port = 9999;
   private statusCheckInterval: NodeJS.Timeout | null = null;
   private disposables: vscode.Disposable[] = [];
   private log: vscode.OutputChannel;
   private aiClassifier: OllamaClassifier | null = null;
+
+  /** Set the port prefix for globally unique agent IDs across windows */
+  setPort(port: number): void {
+    this.port = port;
+  }
 
   constructor(outputChannel: vscode.OutputChannel) {
     super();
@@ -63,25 +69,43 @@ export class AgentManager extends EventEmitter {
       })
     );
 
-    // Auto-attach: use proposed API if available (best-effort, for untracked terminals only)
-    // Launched agents capture output via Pseudoterminal — no proposed API needed.
-    try {
-      const _prop = ['onDid', 'Write', 'Terminal', 'Data'].join('');
-      const onDidWrite = (vscode.window as any)[_prop];
-      if (typeof onDidWrite === 'function') {
-        this.disposables.push(
-          onDidWrite((e: { terminal: vscode.Terminal; data: string }) => {
-            if (!this.terminalToAgent.has(e.terminal)) {
-              this.tryAutoAttach(e.terminal, e.data);
+    // Auto-attach via Shell Integration API (stable, works in production).
+    // Detects when user types an agent command (claude, gemini, etc.) in any terminal,
+    // auto-attaches it, and streams output via execution.read() for status detection.
+    if (vscode.window.onDidStartTerminalShellExecution) {
+      this.disposables.push(
+        vscode.window.onDidStartTerminalShellExecution((event) => {
+          if (!vscode.workspace.getConfiguration('agentdeck').get<boolean>('autoAttach', true)) return;
+          if (this.terminalToAgent.has(event.terminal)) return;
+
+          const cmdLine = event.execution.commandLine.value.trim();
+          const cmd = cmdLine.split(/\s+/)[0];
+          const agentType = SUPPORTED_AGENTS.find(a => cmd === a || cmd.endsWith(`/${a}`));
+          if (!agentType) return;
+
+          const folders = vscode.workspace.workspaceFolders;
+          const projectPath = folders?.[0]?.uri.fsPath || '';
+          if (!projectPath) return;
+
+          const id = this.attach(event.terminal, agentType, projectPath);
+          this.log.appendLine(`[AUTO-ATTACH ${id}] ${agentType} detected via shell integration: "${cmdLine}"`);
+          vscode.window.showInformationMessage(`AgentDeck: Auto-attached ${agentType} from terminal`);
+
+          // Stream output via execution.read() for status detection
+          (async () => {
+            try {
+              for await (const data of event.execution.read()) {
+                this.handleAgentOutput(id, data);
+              }
+            } catch {
+              this.log.appendLine(`[AUTO-ATTACH ${id}] Output stream ended`);
             }
-          })
-        );
-        this.log.appendLine('[AgentManager] Auto-attach listener active (proposed API available)');
-      } else {
-        this.log.appendLine('[AgentManager] Auto-attach disabled (proposed API not available)');
-      }
-    } catch {
-      this.log.appendLine('[AgentManager] Auto-attach disabled (proposed API error)');
+          })();
+        })
+      );
+      this.log.appendLine('[AgentManager] Auto-attach active (Shell Integration API)');
+    } else {
+      this.log.appendLine('[AgentManager] Auto-attach disabled (Shell Integration API not available)');
     }
 
     this.log.appendLine(`[AgentManager] Initialized (node-pty: ${isNodePtyAvailable() ? 'yes' : 'no'})`);
@@ -121,11 +145,13 @@ export class AgentManager extends EventEmitter {
   private createManagedAgent(
     id: string, agentType: AgentType, terminal: vscode.Terminal, projectPath: string,
   ): ManagedAgent {
-    const dirName = projectPath.split('/').filter(Boolean).pop() || agentType;
+    // Use workspace folder name for display (not worktree path)
+    const folders = vscode.workspace.workspaceFolders;
+    const workspaceName = folders?.[0]?.name || projectPath.split('/').filter(Boolean).pop() || agentType;
     return {
       id,
       agent: agentType,
-      name: dirName.slice(0, 8).toUpperCase(),
+      name: workspaceName.slice(0, 8).toUpperCase(),
       projectPath,
       createdAt: new Date().toISOString(),
       status: 'working',
@@ -136,7 +162,7 @@ export class AgentManager extends EventEmitter {
   }
 
   launch(agentType: AgentType, projectPath: string, message?: string): string {
-    const id = `agent-${this.nextId++}`;
+    const id = `w${this.port}-agent-${this.nextId++}`;
     const worktreeEnabled = vscode.workspace.getConfiguration('agentdeck').get<boolean>('worktree.enabled', true);
 
     if (worktreeEnabled) {
@@ -407,31 +433,28 @@ export class AgentManager extends EventEmitter {
       // Use the agent's project folder name (last path segment) to find the right window.
       if (process.platform === 'darwin') {
         const appName = vscode.env.appName || 'Visual Studio Code';
-        const projectName = agent.projectPath.split('/').filter(Boolean).pop() || '';
+        // Use workspace folder name for window matching (not worktree/cwd path)
+        const folders = vscode.workspace.workspaceFolders;
+        const projectName = folders?.[0]?.name || agent.projectPath.split('/').filter(Boolean).pop() || '';
         this.log.appendLine(`[FOCUS] appName="${appName}" projectName="${projectName}"`);
         // Two-step approach:
-        // 1. tell application (by display name) → activate + set index (works cross-app)
-        // 2. tell System Events (by process name from bundle) → AXRaise (works same-app)
+        // 1. tell application (by display name) → activate + set index (brings window forward)
+        // 2. tell System Events → find by app name (not frontmost) → AXRaise (ensures correct window on top)
+        // Use System Events + bundle identifier for reliable window focus
+        // Works across VS Code (com.microsoft.VSCode), Windsurf (com.exafunction.windsurf), Cursor, etc.
+        // Electron-based editors register as "Electron" process, so we can't match by app name.
+        const bundleId = vscode.env.uriScheme || 'vscode';
         execFile('osascript', ['-e',
-          `-- Step 1: activate app and reorder window (works when switching FROM another app)\n` +
-          `tell application "${appName}"\n` +
-          `  activate\n` +
-          `  repeat with w in (every window)\n` +
-          `    if name of w contains "${projectName}" then\n` +
-          `      set index of w to 1\n` +
-          `      exit repeat\n` +
-          `    end if\n` +
-          `  end repeat\n` +
-          `end tell\n` +
-          `\n` +
-          `-- Step 2: AXRaise via System Events (works when switching WITHIN same app)\n` +
-          `-- Get the real process name from the bundle so it works for Windsurf, Cursor, VS Code, etc.\n` +
           `tell application "System Events"\n` +
-          `  set appProcess to first process whose frontmost is true\n` +
-          `  repeat with w in (every window of appProcess)\n` +
+          `  -- Find process by bundle ID (handles Electron-based editors)\n` +
+          `  set matchedProcs to every process whose bundle identifier contains "${bundleId}"\n` +
+          `  if (count of matchedProcs) = 0 then return "no process"\n` +
+          `  set p to item 1 of matchedProcs\n` +
+          `  set frontmost of p to true\n` +
+          `  repeat with w in (every window of p)\n` +
           `    if name of w contains "${projectName}" then\n` +
           `      perform action "AXRaise" of w\n` +
-          `      exit repeat\n` +
+          `      return "ok"\n` +
           `    end if\n` +
           `  end repeat\n` +
           `end tell`
@@ -498,7 +521,7 @@ export class AgentManager extends EventEmitter {
       return this.terminalToAgent.get(terminal)!;
     }
 
-    const id = `agent-${this.nextId++}`;
+    const id = `w${this.port}-agent-${this.nextId++}`;
     const agent = this.createManagedAgent(id, agentType, terminal, projectPath);
     this.agents.set(id, agent);
     this.terminalToAgent.set(terminal, id);

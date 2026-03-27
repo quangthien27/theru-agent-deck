@@ -24,20 +24,20 @@ You're constantly:
 
 ## The Solution
 
-AgentDeck provides real-time visibility and physical controls for managing multiple Claude Code sessions—whether they're running in tmux, VS Code, or Cursor.
+AgentDeck provides real-time visibility and physical controls for managing multiple AI coding agents — Claude Code, Gemini, Codex, Aider, and OpenCode. No external dependencies, no tmux — agents run as native terminals in VS Code, Windsurf, or Cursor.
 
 ### Works Where You Work
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                                                                  │
-│   tmux terminals ─────┐                                         │
-│                       │                                         │
-│   VS Code terminals ──┼──▶  AgentDeck  ──▶  MX Creative Console │
-│                       │                                         │
-│   Cursor terminals ───┘                                         │
+│   VS Code  ─────────┐                                           │
+│                      │                                           │
+│   Windsurf ─────────┼──▶  AgentDeck  ──▶  MX Creative Console   │
+│                      │                                           │
+│   Cursor ───────────┘                                           │
 │                                                                  │
-│   One control surface. Any workflow.                            │
+│   Multiple windows. One control surface.                         │
 │                                                                  │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -101,6 +101,10 @@ Navigate and act without looking at the keyboard:
 
 AgentDeck detects agent state changes using standard terminal escape sequences. When Claude Code needs approval, it sends a terminal bell character. AgentDeck intercepts this instantly — no polling, no delay. Your console tile turns yellow and your MX Master 4 buzzes the moment the agent needs you.
 
+### Auto-Attach — Zero Configuration
+
+Type `claude`, `gemini`, `aider`, `codex`, or `opencode` in any terminal. AgentDeck detects the command via VS Code's Shell Integration API, auto-attaches the terminal, and streams output for full status detection. No special setup — just launch agents however you normally do.
+
 ### MX Master 4 Haptics — Ambient Awareness
 
 | Event | Feedback |
@@ -115,38 +119,38 @@ AgentDeck detects agent state changes using standard terminal escape sequences. 
 
 ## Architecture
 
-AgentDeck uses a Bridge architecture that separates concerns and enables multi-source support:
+No external dependencies — no tmux, no bridge process, no daemon. The VS Code extension IS the server.
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                                                                  │
-│   ┌─────────────┐      ┌─────────────┐      ┌─────────────┐     │
-│   │    tmux     │      │   VS Code   │      │   Cursor    │     │
-│   │  terminals  │      │  terminals  │      │  terminals  │     │
-│   └──────┬──────┘      └──────┬──────┘      └──────┬──────┘     │
-│          │                    │                    │             │
-│          └────────────────────┼────────────────────┘             │
-│                               ▼                                  │
-│                 ┌─────────────────────────┐                      │
-│                 │     Bridge Service      │  Node.js             │
-│                 │  • Terminal monitoring  │                      │
-│                 │  • Claude Code parsing  │                      │
-│                 │  • State management     │                      │
-│                 └───────────┬─────────────┘                      │
-│                             │ WebSocket                          │
-│                             ▼                                    │
-│                 ┌─────────────────────────┐                      │
-│                 │      Logi Plugin        │  C# / Actions SDK    │
-│                 │  • LCD rendering        │                      │
-│                 │  • Ring content         │                      │
-│                 │  • Haptic feedback      │                      │
-│                 └───────────┬─────────────┘                      │
-│                             │                                    │
-└─────────────────────────────┼────────────────────────────────────┘
-                              ▼
-                   MX Creative Console
-                      + MX Master 4
+│   ┌──────────────────────────────────────────────────────┐       │
+│   │       VS Code / Windsurf / Cursor (per window)       │       │
+│   │                                                       │       │
+│   │  Extension:                                           │       │
+│   │  • Spawns agents via node-pty + Pseudoterminal       │       │
+│   │  • Captures output for status detection              │       │
+│   │  • WebSocket server (:9999-10008, one port/window)   │       │
+│   │  • Sidebar, diff viewer, commands                    │       │
+│   └───────────────────────┬──────────────────────────────┘       │
+│                           │ WebSocket (per window)               │
+│                           ▼                                      │
+│   ┌───────────────────────────────────────────────────┐          │
+│   │           Logi Plugin (C# / Actions SDK)          │          │
+│   │                                                    │          │
+│   │  • BridgeMultiClient: connects to ALL windows     │          │
+│   │  • Merges agent state from all windows            │          │
+│   │  • Routes commands to correct window              │          │
+│   │  • LCD tile rendering, haptic feedback            │          │
+│   └───────────────────────┬───────────────────────────┘          │
+│                           │                                      │
+└───────────────────────────┼──────────────────────────────────────┘
+                            ▼
+                 MX Creative Console
+                    + MX Master 4
 ```
+
+**Multi-window:** Each editor window runs its own extension instance on a unique port. The Logi plugin discovers all active windows, merges their agent state, and routes commands by agent ID prefix. Focus a window, press NEW on the console — agent spawns in that window.
 
 ---
 
@@ -154,48 +158,27 @@ AgentDeck uses a Bridge architecture that separates concerns and enables multi-s
 
 ### Prerequisites
 
-- macOS or Windows
+- macOS (Windows support planned)
 - [Logi Options+](https://www.logitech.com/software/logi-options-plus.html) installed
-- Logitech MX Creative Console
-- Node.js 18+ (for Bridge service)
-- tmux installed (`brew install tmux` on macOS) — *or VS Code/Cursor*
-- Claude Code CLI installed
+- Logitech MX Creative Console (+ MX Master 4 for haptics)
+- VS Code, Windsurf, or Cursor
+- At least one AI coding agent CLI installed (claude, gemini, codex, aider, opencode)
 
-### Installation (5 minutes)
-
-**Option 1: tmux Users (Recommended)**
+### Installation
 
 ```bash
 # 1. Install the Logi plugin
-# Download AgentDeck.lplug4 from Releases
-# Double-click to install in Logi Options+
-# (Bridge starts automatically with plugin)
-
-# 2. Configure your projects
-mkdir -p ~/.agentdeck
-cat > ~/.agentdeck/config.json << 'EOF'
-{
-  "projects": [
-    { "name": "MyApp", "path": "~/projects/my-app" },
-    { "name": "API", "path": "~/projects/api" }
-  ]
-}
-EOF
-
-# 3. Press NEW on the keypad and start working!
-```
-
-**Option 2: VS Code / Cursor Users**
-
-```bash
-# 1. Install the Logi plugin (same as above)
+# Download AgentDeck.lplug4 from Releases → double-click to install
 
 # 2. Install the VS Code extension
-code --install-extension agentdeck.agentdeck
+# In VS Code/Windsurf/Cursor: Extensions → ⋯ → Install from VSIX → select agentdeck-*.vsix
 
-# 3. Open Claude Code in VS Code terminals
-# AgentDeck automatically detects them!
+# 3. Assign "Agent Deck" folder to an LCD button in Logi Options+
+
+# 4. Open a project, tap the button — you're in!
 ```
+
+Agents launched from the console or command palette run as native editor terminals. No tmux, no bridge, no configuration files needed.
 
 ---
 
