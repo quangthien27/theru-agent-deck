@@ -28,6 +28,7 @@ namespace Loupedeck.AgentDeckPlugin.Adjustments
                     var newIdx = (currentIdx + diff) % agents.Count;
                     if (newIdx < 0) newIdx += agents.Count;
                     this.Plugin.State.SelectedAgentId = agents[newIdx].Id;
+                    _ = this.Plugin.BridgeClient.SendOpenTerminal(agents[newIdx].Id);
                     this.Plugin.ActiveFolder?.RefreshExternal();
                     break;
 
