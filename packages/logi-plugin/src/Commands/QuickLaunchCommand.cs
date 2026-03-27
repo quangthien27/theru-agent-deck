@@ -18,7 +18,7 @@ namespace Loupedeck.AgentDeckPlugin.Commands
         };
 
         public QuickLaunchCommand()
-            : base("Quick Launch", "Quick Launch — Launch agent in workspace", "Agents")
+            : base("Launch Agent", "Launch Agent — Launch agent in workspace", "Agents")
         {
             this.MakeProfileAction("tree");
         }

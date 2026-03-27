@@ -11,11 +11,11 @@ namespace Loupedeck.AgentDeckPlugin.Commands
         private new AgentDeckPlugin Plugin => (AgentDeckPlugin)base.Plugin;
 
         public ApproveAllCommand()
-            : base("Approve All", "Approve All — Approve all waiting agents", "Controls") { }
+            : base("Continue All", "Continue All — Approve all waiting agents", "Controls") { }
 
         protected override void RunCommand(String actionParameter)
         {
-            foreach (var agent in this.Plugin.State.Agents.Where(a => a.Status == AgentStatus.Waiting))
+            foreach (var agent in this.Plugin.State.Agents.Where(a => a.Status == AgentStatus.Waiting).ToList())
             {
                 _ = this.Plugin.BridgeClient.SendCommand(agent.Id, "approve");
             }

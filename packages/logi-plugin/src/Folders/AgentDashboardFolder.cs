@@ -64,7 +64,7 @@ namespace Loupedeck.AgentDeckPlugin.Folders
 
         public AgentDashboardFolder()
         {
-            this.DisplayName = "Agent Deck";
+            this.DisplayName = "AgentDeck";
             this.GroupName = "Agents";
         }
 

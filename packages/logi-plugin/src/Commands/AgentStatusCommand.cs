@@ -11,7 +11,7 @@ namespace Loupedeck.AgentDeckPlugin.Commands
         private new AgentDeckPlugin Plugin => (AgentDeckPlugin)base.Plugin;
 
         public AgentStatusCommand()
-            : base("Agent Status", "Agent Status — Fleet overview with status dots", "Agents") { }
+            : base("Agents Status", "Agents Status — Fleet overview with status dots", "Agents") { }
 
         protected override void RunCommand(String actionParameter)
         {

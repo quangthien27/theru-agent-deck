@@ -9,7 +9,7 @@ namespace Loupedeck.AgentDeckPlugin.Adjustments
         private new AgentDeckPlugin Plugin => (AgentDeckPlugin)base.Plugin;
 
         public DialAdjustment()
-            : base("Agent Selector", "Cycle through agents", "Navigation", hasReset: false)
+            : base("Agent Dial", "Rotate to cycle agents, press to focus terminal", "Navigation", hasReset: false)
         {
         }
 
