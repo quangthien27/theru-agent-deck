@@ -7,6 +7,7 @@ namespace Loupedeck.AgentDeckPlugin.Adjustments
     public class DialAdjustment : PluginDynamicAdjustment
     {
         private new AgentDeckPlugin Plugin => (AgentDeckPlugin)base.Plugin;
+        private Int32 _accumulated = 0;
 
         public DialAdjustment()
             : base("Agent Dial", "Rotate to cycle agents, press to focus terminal", "Navigation", hasReset: false)
@@ -15,17 +16,22 @@ namespace Loupedeck.AgentDeckPlugin.Adjustments
 
         protected override void ApplyAdjustment(String actionParameter, Int32 diff)
         {
+            _accumulated += diff;
+            if (Math.Abs(_accumulated) < PluginState.DialStepThreshold) return;
+
+            var steps = Math.Sign(_accumulated); // clamp to ±1, never skip items
+            _accumulated = 0;
+
             var view = this.Plugin.ActiveFolder?.CurrentView ?? "dashboard";
             var agents = this.Plugin.State.Agents;
 
             switch (view)
             {
                 case "dashboard":
-                    // Rotate: cycle selected agent
                     if (agents.Count == 0) return;
                     var currentIdx = agents.FindIndex(a => a.Id == this.Plugin.State.SelectedAgentId);
                     if (currentIdx < 0) currentIdx = 0;
-                    var newIdx = (currentIdx + diff) % agents.Count;
+                    var newIdx = (currentIdx + steps) % agents.Count;
                     if (newIdx < 0) newIdx += agents.Count;
                     this.Plugin.State.SelectedAgentId = agents[newIdx].Id;
                     _ = this.Plugin.BridgeClient.SendOpenTerminal(agents[newIdx].Id);
@@ -33,11 +39,10 @@ namespace Loupedeck.AgentDeckPlugin.Adjustments
                     break;
 
                 case "skills":
-                    // Rotate: could scroll skill pages — unused for now
                     break;
 
                 default:
-                    this.Plugin.State.RingScrollOffset += diff;
+                    this.Plugin.State.RingScrollOffset += steps;
                     break;
             }
 

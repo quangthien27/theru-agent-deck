@@ -26,6 +26,7 @@ namespace Loupedeck.AgentDeckPlugin.Services
         public event Action<String, String> OnAgentEvent; // agentId, eventType
         public event Action<Boolean> OnSettingsUpdate; // worktreeEnabled
         public event Action<Int32, String> OnWindowFocus; // port, raw json
+        public event Action<String> OnActiveAgent; // agentId
         public event Action OnConnected;
         public event Action OnDisconnected;
 
@@ -145,6 +146,11 @@ namespace Loupedeck.AgentDeckPlugin.Services
                     case "window_focus":
                         var focusPort = doc.RootElement.GetProperty("port").GetInt32();
                         OnWindowFocus?.Invoke(focusPort, json);
+                        break;
+
+                    case "active_agent":
+                        var activeId = doc.RootElement.GetProperty("agentId").GetString();
+                        OnActiveAgent?.Invoke(activeId);
                         break;
                 }
             }

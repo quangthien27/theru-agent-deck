@@ -11,6 +11,7 @@ namespace Loupedeck.AgentDeckPlugin.Adjustments
 
         private static readonly String[] Modes = { "ask", "auto", "plan" };
         private Int32 _modeIndex = 0; // default: ask
+        private Int32 _accumulated = 0;
 
         public ModeAdjustment()
             : base("Permission Mode", "Cycle agent permission mode", "Controls", hasReset: false)
@@ -19,18 +20,21 @@ namespace Loupedeck.AgentDeckPlugin.Adjustments
 
         protected override void ApplyAdjustment(String actionParameter, Int32 diff)
         {
+            _accumulated += diff;
+            if (Math.Abs(_accumulated) < PluginState.DialStepThreshold) return;
+            var steps = Math.Sign(_accumulated);
+            _accumulated = 0;
+
             var agentId = this.Plugin.State.SelectedAgentId;
             if (String.IsNullOrEmpty(agentId)) return;
 
-            // Each rotation step sends one Shift+Tab to cycle mode
-            var steps = Math.Abs(diff);
-            for (var i = 0; i < steps; i++)
+            var absSteps = Math.Abs(steps);
+            for (var i = 0; i < absSteps; i++)
             {
                 _ = this.Plugin.BridgeClient.SendCommand(agentId, "cycle_mode");
             }
 
-            // Track mode locally (best-effort, may drift)
-            _modeIndex = (_modeIndex + diff) % Modes.Length;
+            _modeIndex = (_modeIndex + steps) % Modes.Length;
             if (_modeIndex < 0) _modeIndex += Modes.Length;
 
             this.AdjustmentValueChanged();

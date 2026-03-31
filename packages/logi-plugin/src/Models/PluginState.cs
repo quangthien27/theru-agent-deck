@@ -12,6 +12,9 @@ namespace Loupedeck.AgentDeckPlugin.Models
 
     public class PluginState
     {
+        /// Dial/roller ticks required per step — higher = less sensitive.
+        public const Int32 DialStepThreshold = 10;
+
         public PluginPhase Phase { get; set; } = PluginPhase.Connecting;
         public List<AgentSession> Agents { get; set; } = new List<AgentSession>();
         public String SelectedAgentId { get; set; }

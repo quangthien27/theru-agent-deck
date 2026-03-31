@@ -31,6 +31,10 @@ interface ManagedAgent {
   aiLastBufLen: number;
   worktreePath?: string;
   worktreeBranch?: string;
+  /** Track if we're inside an OSC sequence (spans chunks) — BEL as OSC terminator is NOT a bell */
+  inOscSequence: boolean;
+  /** Timestamp of last bare BEL — debounce at 100ms like Ghostty */
+  lastBellTime: number;
 }
 
 export class AgentManager extends EventEmitter {
@@ -158,6 +162,8 @@ export class AgentManager extends EventEmitter {
       terminal,
       outputBuffer: '',
       aiLastBufLen: 0,
+      inOscSequence: false,
+      lastBellTime: 0,
     };
   }
 
@@ -202,23 +208,54 @@ export class AgentManager extends EventEmitter {
     const agent = this.agents.get(agentId);
     if (!agent) return;
 
-    // ── Escape sequence detection (instant, no polling) ──
+    // ── Escape sequence detection (Ghostty-style state machine) ──
+    // Track OSC state across chunks so BEL-as-OSC-terminator isn't mistaken for bare BEL.
     const escapes: string[] = [];
-    if (chunk.includes('\x07')) escapes.push('BEL(\\x07)');
-    if (chunk.includes('\x1b]9;')) escapes.push('OSC9');
-    if (chunk.includes('\x1b]777;')) escapes.push('OSC777');
-    if (chunk.includes('\x1b]2;')) escapes.push('OSC2-title');
-    if (chunk.includes('\x1b[2J')) escapes.push('CLEAR-2J');
-    if (chunk.includes('\x1b[3J')) escapes.push('CLEAR-3J');
+    let bareBellCount = 0;
+
+    for (let i = 0; i < chunk.length; i++) {
+      const ch = chunk[i];
+
+      if (ch === '\x1b' && i + 1 < chunk.length) {
+        if (chunk[i + 1] === ']') {
+          // OSC sequence start — BEL inside this is a terminator, not a bell
+          agent.inOscSequence = true;
+
+          // Log specific OSC types
+          const rest = chunk.slice(i);
+          if (rest.startsWith('\x1b]9;')) escapes.push('OSC9');
+          else if (rest.startsWith('\x1b]777;')) escapes.push('OSC777');
+          else if (rest.startsWith('\x1b]2;')) escapes.push('OSC2-title');
+        } else if (chunk[i + 1] === '[') {
+          const rest = chunk.slice(i);
+          if (rest.startsWith('\x1b[2J')) escapes.push('CLEAR-2J');
+          if (rest.startsWith('\x1b[3J')) escapes.push('CLEAR-3J');
+        } else if (chunk[i + 1] === '\\' && agent.inOscSequence) {
+          // ST (String Terminator) ends OSC — alternative to BEL
+          agent.inOscSequence = false;
+        }
+      } else if (ch === '\x07') {
+        if (agent.inOscSequence) {
+          // BEL as OSC terminator — NOT a bell
+          agent.inOscSequence = false;
+        } else {
+          // Bare BEL — real bell signal
+          bareBellCount++;
+        }
+      }
+    }
+
+    if (bareBellCount > 0) escapes.push(`BEL(\\x07)x${bareBellCount}`);
     if (escapes.length > 0) {
       this.log.appendLine(`[ESC ${agentId}] detected: ${escapes.join(', ')}  (status=${agent.status}, chunk=${chunk.length}b)`);
     }
 
-    // BEL character (\x07) = agent requesting attention (needs input).
-    if (chunk.includes('\x07') && agent.status === 'working') {
-      const hasBarebell = chunk.includes('\x07') && !chunk.includes('\x1b]');
-      if (hasBarebell) {
-        this.log.appendLine(`[BEL ${agentId}] Bell detected — agent needs input`);
+    // Bare BEL = agent requesting attention. Debounce at 100ms (like Ghostty).
+    if (bareBellCount > 0 && agent.status === 'working') {
+      const now = Date.now();
+      if (now - agent.lastBellTime >= 100) {
+        agent.lastBellTime = now;
+        this.log.appendLine(`[BEL ${agentId}] Bare bell detected — agent needs input`);
         const prev = agent.status;
         agent.status = 'waiting';
         this.emit('statusChange', agentId, prev, 'waiting');
@@ -431,25 +468,46 @@ export class AgentManager extends EventEmitter {
   private focusEditorWindow(): void {
     if (process.platform === 'darwin') {
       const folders = vscode.workspace.workspaceFolders;
-      const projectName = folders?.[0]?.name || '';
+      const folderName = folders?.[0]?.name || '';
+      const workspaceName = vscode.workspace.name || '';
       const bundleId = vscode.env.uriScheme || 'vscode';
-      this.log.appendLine(`[FOCUS] bundleId="${bundleId}" projectName="${projectName}"`);
+      // Build list of candidate names to match against window title.
+      // Users may set a custom window.title like "Man of Many${separator}..." — extract the static prefix.
+      const candidates = new Set([folderName, workspaceName].filter(n => n.length > 0));
+      const titleTemplate = vscode.workspace.getConfiguration('window').get<string>('title', '');
+      if (titleTemplate) {
+        // Extract static text before first ${...} variable
+        const staticPrefix = titleTemplate.split('${')[0].trim().replace(/[-—]$/, '').trim();
+        if (staticPrefix.length > 2) candidates.add(staticPrefix);
+      }
+      this.log.appendLine(`[FOCUS] bundleId="${bundleId}" candidates=${JSON.stringify([...candidates])}`);
+
+      // AppleScript: try each candidate name against window titles
+      const conditions = [...candidates].map(name =>
+        `if name of w contains "${name}" then\n` +
+        `        perform action "AXRaise" of w\n` +
+        `        return "raised: " & name of w\n` +
+        `      end if`
+      ).join('\n      ');
+
       execFile('osascript', ['-e',
         `tell application "System Events"\n` +
         `  set matchedProcs to every process whose bundle identifier contains "${bundleId}"\n` +
         `  if (count of matchedProcs) = 0 then return "no process"\n` +
         `  set p to item 1 of matchedProcs\n` +
         `  set frontmost of p to true\n` +
+        `  set windowNames to {}\n` +
         `  repeat with w in (every window of p)\n` +
-        `    if name of w contains "${projectName}" then\n` +
-        `      perform action "AXRaise" of w\n` +
-        `      return "ok"\n` +
-        `    end if\n` +
+        `    set end of windowNames to name of w\n` +
+        `    ${conditions}\n` +
         `  end repeat\n` +
+        `  return "no match in: " & (windowNames as text)\n` +
         `end tell`
-      ], (err) => {
+      ], (err, stdout) => {
         if (err) {
           this.log.appendLine(`[FOCUS] osascript error: ${err.message}`);
+        } else if (stdout) {
+          this.log.appendLine(`[FOCUS] osascript result: ${stdout.trim()}`);
         }
       });
     } else if (process.platform === 'win32') {
@@ -507,6 +565,11 @@ export class AgentManager extends EventEmitter {
   /** Returns terminals already tracked by AgentDeck */
   getTrackedTerminals(): Set<vscode.Terminal> {
     return new Set(this.terminalToAgent.keys());
+  }
+
+  /** Returns the agent ID for a terminal, or undefined if not tracked */
+  getAgentIdForTerminal(terminal: vscode.Terminal): string | undefined {
+    return this.terminalToAgent.get(terminal);
   }
 
   /** Attach an existing terminal as a managed agent */

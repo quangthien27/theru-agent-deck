@@ -163,6 +163,17 @@ function isClaudeBusy(lastLines: string[], recentLower: string): boolean {
       || tail.includes('tell claude what to change') || tail.includes('would you like to proceed')) {
     return false;
   }
+  // Permission mode indicators (TUI-stripped variants — no spaces in cursor-positioned text)
+  if (tail.includes('accepteditson') || tail.includes('planmodeon')
+      || tail.includes('shift+tabtocycle') || tail.includes('shift+tab to cycle')) {
+    return false;
+  }
+  // Claude shows "{whimsical word} for {N}s ❯" when finished (Brewed, Cooked, Crunched, etc.)
+  // Must NOT match the progress indicator "(1m 16s · ↓1.9k tokens)" which appears during work.
+  // Completion format: "for Xs ❯" or "for Xm Ys ❯" — not inside parentheses, no "·" after.
+  if (/for \d+m?\s?\d*s ❯/.test(tail) && !tail.match(/for \d+m?\s?\d*s\s*·/)) {
+    return false;
+  }
 
   // Check explicit busy text
   if (recentLower.includes('ctrl+c to interrterrupt') || recentLower.includes('esc to interrterrupt')) {
@@ -251,11 +262,20 @@ function isClaudeIdle(lastLines: string[], recentContent: string): boolean {
     if (clean.startsWith('❯ Try ') || clean.startsWith('> Try ')) { hasPrompt = true; break; }
   }
 
+  // Permission mode bar = idle (Claude finished, showing mode indicator)
+  // Matches both spaced and TUI-stripped variants
+  const tail = recentContent.slice(-500);
+  if (tail.includes('accepteditson') || tail.includes('accept edits on')
+      || tail.includes('planmodeon') || tail.includes('plan mode on')) {
+    if (tail.includes('shift+tabtocycle') || tail.includes('shift+tab to cycle')) {
+      return true;
+    }
+  }
+
   if (!hasPrompt) return false;
 
   // If interactive selection UI is active in the TAIL, ❯ is a cursor not idle.
   // Only check the tail (~500 chars) — stale patterns further back are irrelevant.
-  const tail = recentContent.slice(-500);
   if (hasClaudeInteractiveUI(tail)) return false;
 
   return true;
@@ -275,7 +295,13 @@ function isGeminiBusy(recentLower: string): boolean {
 }
 
 function isGeminiWaiting(_lastLines: string[], recentContent: string): boolean {
-  return matchesCommonPrompts(recentContent);
+  const tail = recentContent.slice(-800);
+  if (matchesCommonPrompts(tail)) return true;
+  // Gemini trust/selection prompts — numbered options like "● 1. Trust folder"
+  if (tail.includes('Do you trust') || tail.includes('Doyoutrust')) return true;
+  // Gemini numbered selection UI (● marks the selected option)
+  if (tail.includes('● 1.') && tail.includes('2.') && tail.includes('3.')) return true;
+  return false;
 }
 
 function isGeminiIdle(lastLines: string[], recentContent: string): boolean {

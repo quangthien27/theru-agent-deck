@@ -79,6 +79,16 @@ namespace Loupedeck.AgentDeckPlugin
                 }
             };
 
+            this.BridgeClient.OnActiveAgent += (agentId) =>
+            {
+                if (this.State.Agents.Exists(a => a.Id == agentId))
+                {
+                    this.State.SelectedAgentId = agentId;
+                    this.RefreshAll();
+                    this.NotifyDashboardFolders();
+                }
+            };
+
             this.BridgeClient.OnSettingsUpdate += (worktreeEnabled) =>
             {
                 this.State.WorktreeEnabled = worktreeEnabled;

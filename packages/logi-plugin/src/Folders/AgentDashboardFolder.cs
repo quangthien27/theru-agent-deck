@@ -246,7 +246,13 @@ namespace Loupedeck.AgentDeckPlugin.Folders
                 case 1: _ = this.Plugin.BridgeClient.SendCommand(a.Id, "restart"); GoBack(); break;
                 case 2: _ = this.Plugin.BridgeClient.SendCommand(a.Id, "checkpoint"); break;
                 case 3: _ = this.Plugin.BridgeClient.SendFocusView("diff", a.Id); break;
-                case 4: _ = this.Plugin.BridgeClient.SendSkill(a.Id, "custom", "continue"); GoBack(); break;
+                case 4:
+                    if (a.Status == AgentStatus.Waiting)
+                        _ = this.Plugin.BridgeClient.SendCommand(a.Id, "approve");
+                    else
+                        _ = this.Plugin.BridgeClient.SendSkill(a.Id, "custom", "continue");
+                    GoBack();
+                    break;
                 case 5: GoBack(); break;
                 case 6: _ = this.Plugin.BridgeClient.SendCommand(a.Id, "cycle_mode"); break;
                 case 7: _ = this.Plugin.BridgeClient.SendCommand(a.Id, "kill"); GoBack(); break;

@@ -105,6 +105,18 @@ export async function activate(context: vscode.ExtensionContext) {
     }),
   );
 
+  // ── Active agent tracking ─────────────────────────────
+  // When user focuses an agent terminal, broadcast so Logi plugin syncs SelectedAgentId.
+  context.subscriptions.push(
+    vscode.window.onDidChangeActiveTerminal(terminal => {
+      if (!terminal || !wsServer) return;
+      const agentId = agentManager.getAgentIdForTerminal(terminal);
+      if (agentId) {
+        wsServer.broadcast({ type: 'active_agent', agentId });
+      }
+    }),
+  );
+
   // ── State broadcast ────────────────────────────────────
   agentManager.on('stateChange', (agents) => {
     sidebarProvider.updateAgents(agents);

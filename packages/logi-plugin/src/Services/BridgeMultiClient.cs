@@ -23,6 +23,7 @@ namespace Loupedeck.AgentDeckPlugin.Services
         public event Action<PluginState> OnStateUpdate;
         public event Action<String, String> OnAgentEvent;
         public event Action<Boolean> OnSettingsUpdate;
+        public event Action<String> OnActiveAgent; // agentId
         public event Action OnConnected;
         public event Action OnDisconnected;
 
@@ -76,6 +77,11 @@ namespace Loupedeck.AgentDeckPlugin.Services
             {
                 _lastFocusedPort = focusPort;
                 PluginLog.Info($"Window focus → port {focusPort}");
+            };
+
+            client.OnActiveAgent += (agentId) =>
+            {
+                OnActiveAgent?.Invoke(agentId);
             };
 
             client.OnConnected += () =>

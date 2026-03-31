@@ -11,6 +11,7 @@ namespace Loupedeck.AgentDeckPlugin.Adjustments
 
         private static readonly String[] Levels = { "low", "medium", "high" };
         private Int32 _levelIndex = 1; // default: medium
+        private Int32 _accumulated = 0;
 
         public EffortAdjustment()
             : base("Effort Level", "Cycle agent effort level", "Controls", hasReset: false)
@@ -19,8 +20,12 @@ namespace Loupedeck.AgentDeckPlugin.Adjustments
 
         protected override void ApplyAdjustment(String actionParameter, Int32 diff)
         {
-            // Rotate: cycle effort level
-            _levelIndex = (_levelIndex + diff) % Levels.Length;
+            _accumulated += diff;
+            if (Math.Abs(_accumulated) < PluginState.DialStepThreshold) return;
+            var steps = Math.Sign(_accumulated);
+            _accumulated = 0;
+
+            _levelIndex = (_levelIndex + steps) % Levels.Length;
             if (_levelIndex < 0) _levelIndex += Levels.Length;
 
             var agentId = this.Plugin.State.SelectedAgentId;
