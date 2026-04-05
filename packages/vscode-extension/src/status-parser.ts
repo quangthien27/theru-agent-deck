@@ -263,13 +263,22 @@ function isClaudeIdle(lastLines: string[], recentContent: string): boolean {
   }
 
   // Permission mode bar = idle (Claude finished, showing mode indicator)
-  // Matches both spaced and TUI-stripped variants
-  const tail = recentContent.slice(-500);
+  // Use the same -800 window as the isClaudeBusy guard so both checks see
+  // identical content — avoids the gap where the guard fires (busy=false) but
+  // the idle check's smaller window misses the text (idle=false → no match).
+  const tail = recentContent.slice(-800);
   if (tail.includes('accepteditson') || tail.includes('accept edits on')
       || tail.includes('planmodeon') || tail.includes('plan mode on')) {
     if (tail.includes('shift+tabtocycle') || tail.includes('shift+tab to cycle')) {
       return true;
     }
+  }
+  // "accept edits on" file browser: ⧉ marker appears in partial TUI updates
+  // (e.g. "⧉ In src/foo.ts", "⧉ 1 line selected") while the user cycles through
+  // proposed edits. These keep arriving even after the status bar text scrolls
+  // out of the detection window, so detect them directly as idle.
+  if (tail.includes('⧉ In ') || tail.includes('⧉ 1 line')) {
+    return true;
   }
 
   if (!hasPrompt) return false;
@@ -585,7 +594,7 @@ export function detectStatus(output: string, currentStatus: AgentStatus, agentTy
 
   const tool = (agentType || '').toLowerCase();
   // Known agent type = higher base confidence. Generic/unknown = lower.
-  const isKnownAgent = ['claude', 'gemini', 'opencode', 'codex', 'aider'].includes(tool);
+  const isKnownAgent = ['claude', 'gemini', 'opencode', 'codex', 'aider', 'amp'].includes(tool);
 
   // ── Run all detectors independently ──
   // Collect which states match, then resolve conflicts.

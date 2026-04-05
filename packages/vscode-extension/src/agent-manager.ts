@@ -35,6 +35,8 @@ interface ManagedAgent {
   inOscSequence: boolean;
   /** Timestamp of last bare BEL — debounce at 100ms like Ghostty */
   lastBellTime: number;
+  /** Timestamp of most recent data chunk received from PTY (ms). 0 = no data yet. */
+  lastDataChunkTime: number;
 }
 
 export class AgentManager extends EventEmitter {
@@ -164,18 +166,20 @@ export class AgentManager extends EventEmitter {
       aiLastBufLen: 0,
       inOscSequence: false,
       lastBellTime: 0,
+      lastDataChunkTime: 0,
     };
   }
 
-  launch(agentType: AgentType, projectPath: string, message?: string): string {
+  launch(agentType: AgentType, projectPath: string, message?: string,
+    opts?: { thinking?: string; mode?: string; effort?: string }): string {
     const id = `w${this.port}-agent-${this.nextId++}`;
     const worktreeEnabled = vscode.workspace.getConfiguration('agentdeck').get<boolean>('worktree.enabled', true);
 
     if (worktreeEnabled) {
       // Async worktree creation — launch happens inside the callback
-      this.launchWithWorktree(id, agentType, projectPath, message);
+      this.launchWithWorktree(id, agentType, projectPath, message, opts);
     } else {
-      this.launchInDirectory(id, agentType, projectPath, message);
+      this.launchInDirectory(id, agentType, projectPath, message, undefined, undefined, opts);
     }
 
     return id;
@@ -183,6 +187,7 @@ export class AgentManager extends EventEmitter {
 
   private async launchWithWorktree(
     id: string, agentType: AgentType, projectPath: string, message?: string,
+    opts?: { thinking?: string; mode?: string; effort?: string },
   ): Promise<void> {
     const dirName = projectPath.split('/').filter(Boolean).pop() || 'proj';
     const ts = Date.now().toString(36).slice(-4); // short 4-char timestamp
@@ -196,10 +201,10 @@ export class AgentManager extends EventEmitter {
       await execFileAsync('git', ['worktree', 'add', '-b', branch, worktreePath], { cwd: projectPath });
       this.log.appendLine(`[WORKTREE ${id}] Created: ${worktreePath} branch=${branch}`);
 
-      this.launchInDirectory(id, agentType, worktreePath, message, worktreePath, branch);
+      this.launchInDirectory(id, agentType, worktreePath, message, worktreePath, branch, opts);
     } catch (err: any) {
       this.log.appendLine(`[WORKTREE ${id}] Failed: ${err.message} — falling back to main tree`);
-      this.launchInDirectory(id, agentType, projectPath, message);
+      this.launchInDirectory(id, agentType, projectPath, message, undefined, undefined, opts);
     }
   }
 
@@ -296,11 +301,14 @@ export class AgentManager extends EventEmitter {
       const preview = cleaned.length > 120 ? cleaned.slice(0, 120) + '...' : cleaned;
       this.log.appendLine(`[DATA ${agentId}] ${preview}`);
     }
+
+    agent.lastDataChunkTime = Date.now();
   }
 
   private launchInDirectory(
     id: string, agentType: AgentType, cwd: string, message?: string,
     worktreePath?: string, worktreeBranch?: string,
+    opts?: { thinking?: string; mode?: string; effort?: string },
   ): void {
     const cmd = agentCommand(agentType);
 
@@ -310,6 +318,18 @@ export class AgentManager extends EventEmitter {
       if (agentType === 'aider') {
         args.push('--message', message);
       }
+    }
+
+    // CLI flags from launch options (currently Claude Code only)
+    if (agentType === 'claude') {
+      if (opts?.thinking) {
+        const budgetMap: Record<string, string> = { low: '5000', medium: '20000', high: '50000' };
+        const tokens = budgetMap[opts.thinking] || opts.thinking;
+        args.push('--thinking-budget-tokens', tokens);
+      }
+      if (opts?.mode === 'bypassPermissions') args.push('--dangerously-skip-permissions');
+      else if (opts?.mode) args.push('--permission-mode', opts.mode === 'auto' ? 'autoApprove' : opts.mode);
+      if (opts?.effort) args.push('--effort', opts.effort);
     }
 
     const dirName = cwd.split('/').filter(Boolean).pop() || agentType;
@@ -720,7 +740,28 @@ export class AgentManager extends EventEmitter {
       const prev = agent.status;
       const bufLen = agent.outputBuffer.length;
 
-      const result = detectStatus(agent.outputBuffer, agent.status, agent.agent);
+      let result = detectStatus(agent.outputBuffer, agent.status, agent.agent);
+
+      // Silence-based fallback: if heuristic found no pattern match (confidence=0.0)
+      // and the agent has been quiet longer than its silence threshold, synthesize idle.
+      // TUI agents stream spinner updates every ~100-200ms while working — sustained
+      // silence means they're done even when buffer patterns are ambiguous.
+      if (result.confidence === 0.0 && agent.status === 'working' && agent.lastDataChunkTime > 0) {
+        const silenceMs = Date.now() - agent.lastDataChunkTime;
+        const SILENCE_THRESHOLDS: Record<string, number> = {
+          claude:   2000,   // spinners fire ~every 100ms — 2s silence = definitely done
+          gemini:   5000,
+          opencode: 5000,
+          codex:    5000,
+          aider:   10000,  // aider can pause several seconds during model inference
+        };
+        const silenceThreshold = SILENCE_THRESHOLDS[agent.agent] ?? 10000;
+        if (silenceMs > silenceThreshold) {
+          result = { status: 'idle', confidence: 0.4 };
+          this.log.appendLine(`[SILENCE ${agent.id}] ${silenceMs}ms quiet → synthesizing idle (agent: ${agent.agent})`);
+        }
+      }
+
       agent.status = result.status;
 
       if (agent.status !== prev) {

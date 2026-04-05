@@ -7,15 +7,16 @@ namespace Loupedeck.AgentDeckPlugin.Folders
 
     public class AgentDashboardFolder : PluginDynamicFolder
     {
-        private const Int32 AgentSlots = 5;
+        private const Int32 AgentSlots = 6;
+        private const Int32 AgentStartPos = 2;
 
         private new AgentDeckPlugin Plugin => (AgentDeckPlugin)base.Plugin;
 
         internal String CurrentView => _view;
 
         private String _view = "dashboard";
+        private String _previousView = "dashboard";
         private Int32 _dashPage = 0;
-        private Int32 _menuPage = 0;
         private Int32 _epoch = 0;
 
         // Double-tap detection
@@ -25,32 +26,33 @@ namespace Loupedeck.AgentDeckPlugin.Folders
 
         // View-switch cooldown — blocks accidental third tap
         private DateTime _viewSwitchTime = DateTime.MinValue;
-        private const Int32 CooldownMs = 1000;
+        private const Int32 CooldownMs = 700;
 
         // Icon caches (loaded from embedded resources)
         private static readonly Dictionary<String, BitmapImage> AgentIconCache = new();
         private static readonly Dictionary<String, BitmapImage> LucideCache = new();
         private static Boolean _iconsLoaded;
 
-        private static readonly String[] AgentTypes = { "claude", "gemini", "codex", "aider", "opencode" };
+        private static readonly String[] AgentTypes = { "claude", "gemini", "codex", "aider", "opencode", "amp" };
 
         private static readonly (String id, String label, String lucide, BitmapColor color)[] Skills =
         {
+            ("continue",   "Continue",  "play",        new BitmapColor(30, 120, 50)),
             ("commit",     "Commit",    "check",       new BitmapColor(30, 120, 50)),
-            ("restart",    "Restart",   "rotate-ccw",  new BitmapColor(217, 119, 6)),
+            ("review",     "Review",    "icon-code",        new BitmapColor(45, 130, 130)),
             ("checkpoint", "Chkpt",     "hash",        new BitmapColor(50, 100, 180)),
             ("diff",       "Diff",      "eye",         new BitmapColor(136, 85, 187)),
-            ("continue",   "Continue",  "play",        new BitmapColor(30, 120, 50)),
         };
 
         private static readonly (String id, String label, String lucide, BitmapColor color)[] MenuActions =
         {
-            ("confirm-all",  "Confirm All",  "check",         new BitmapColor(30, 120, 50)),
-            ("pause-all",    "Pause All",    "circle-pause",  new BitmapColor(136, 102, 34)),
-            ("kill-all",     "End All",      "icon-x",        new BitmapColor(180, 40, 40)),
-            ("show-waiting", "Wait First",   "circle-dot",    new BitmapColor(180, 160, 30)),
-            ("show-errors",  "Err First",    "icon-x",        new BitmapColor(180, 40, 40)),
-            ("focus-next",   "Next Wait",    "play",          new BitmapColor(212, 176, 48)),
+            ("focus-next",   "Next Wait",    "play",           new BitmapColor(45, 130, 130)),
+            ("confirm-all",  "Confirm All",  "check",          new BitmapColor(30, 120, 50)),
+            ("pause-all",    "Pause All",    "circle-pause",   new BitmapColor(136, 102, 34)),
+            ("kill-all",     "End All",      "icon-x",         new BitmapColor(180, 40, 40)),
+            ("show-ready",   "Rdy 1st",      "arrow-up-down",  new BitmapColor(45, 55, 70)),
+            ("show-waiting", "Wait 1st",     "arrow-up-down",  new BitmapColor(70, 65, 30)),
+            ("show-errors",  "Err 1st",      "arrow-up-down",  new BitmapColor(75, 35, 40)),
         };
 
         private static readonly Dictionary<String, BitmapColor> AgentColors = new()
@@ -60,6 +62,7 @@ namespace Loupedeck.AgentDeckPlugin.Folders
             { "codex",    new BitmapColor(16, 163, 127) },
             { "aider",    new BitmapColor(230, 126, 34) },
             { "opencode", new BitmapColor(106, 77, 186) },
+            { "amp",      new BitmapColor(243, 78, 63) },
         };
 
         public AgentDashboardFolder()
@@ -108,8 +111,8 @@ namespace Loupedeck.AgentDeckPlugin.Folders
                 "plus", "menu", "chevron-left", "chevron-up", "chevron-down", "chevron-right",
                 "check", "icon-x", "keyboard", "message-circle", "git-branch", "layers",
                 "settings", "circle-pause", "terminal", "undo-2", "play", "circle-dot",
-                "hash", "rotate-ccw", "wrench", "test-tube", "refresh-cw", "code",
-                "eye", "lightbulb"
+                "hash", "rotate-ccw", "wrench", "test-tube", "refresh-cw", "icon-code",
+                "eye", "lightbulb", "arrow-up-down"
             };
             foreach (var name in lucideNames)
             {
@@ -144,6 +147,7 @@ namespace Loupedeck.AgentDeckPlugin.Folders
                 case "dashboard": OnDashboard(pos); break;
                 case "skills":    OnSkills(pos); break;
                 case "new-agent": OnNewAgent(pos); break;
+                case "configs":   OnConfigs(pos); break;
                 case "menu":      OnMenu(pos); break;
             }
         }
@@ -162,6 +166,7 @@ namespace Loupedeck.AgentDeckPlugin.Folders
                 "dashboard"  => DrawDashboard(pos, sz),
                 "skills"     => DrawSkills(pos, sz),
                 "new-agent"  => DrawNewAgent(pos, sz),
+                "configs"    => DrawConfigs(pos, sz),
                 "menu"       => DrawMenu(pos, sz),
                 _            => Empty(sz)
             };
@@ -173,9 +178,15 @@ namespace Loupedeck.AgentDeckPlugin.Folders
 
         private void OnDashboard(Int32 pos)
         {
-            if (pos < AgentSlots)
+            switch (pos)
             {
-                var ai = _dashPage * AgentSlots + pos;
+                case 0: _view = "new-agent"; Refresh(); return;
+                case 1: _view = "menu"; Refresh(); return;
+            }
+
+            if (pos >= AgentStartPos && pos < AgentStartPos + AgentSlots)
+            {
+                var ai = _dashPage * AgentSlots + (pos - AgentStartPos);
                 var agents = this.Plugin.State.Agents;
                 if (ai >= agents.Count) return;
                 var agent = agents[ai];
@@ -196,40 +207,31 @@ namespace Loupedeck.AgentDeckPlugin.Folders
 
                 // Single tap: focus terminal
                 _ = this.Plugin.BridgeClient.SendOpenTerminal(agent.Id);
-                return;
-            }
-            else switch (pos)
-            {
-                case 5: _view = "new-agent"; Refresh(); break;
-                case 6:
-                    var p = Math.Max(1, (Int32)Math.Ceiling(this.Plugin.State.Agents.Count / (Double)AgentSlots));
-                    _dashPage = (_dashPage + 1) % p;
-                    Refresh();
-                    break;
-                case 7: _view = "menu"; _menuPage = 0; Refresh(); break;
             }
         }
 
         private BitmapImage DrawDashboard(Int32 pos, Int32 sz)
         {
-            if (pos < AgentSlots)
+            switch (pos)
             {
-                var ai = _dashPage * AgentSlots + pos;
+                case 0: return TileCtrl("plus", "NEW", new BitmapColor(40, 40, 60), sz);
+                case 1: return TileStatus(sz);
+            }
+
+            if (pos >= AgentStartPos && pos < AgentStartPos + AgentSlots)
+            {
+                var ai = _dashPage * AgentSlots + (pos - AgentStartPos);
                 var agents = this.Plugin.State.Agents;
                 return ai < agents.Count ? TileAgent(agents[ai], sz) : Empty(sz);
             }
-            return pos switch
-            {
-                5 => TileCtrl("plus", "NEW", new BitmapColor(40, 40, 60), sz),
-                6 => TileStatus(sz),
-                7 => TileCtrl("menu", "MENU", new BitmapColor(40, 50, 50), sz),
-                _ => Empty(sz)
-            };
+
+            return Empty(sz);
         }
 
         // ══════════════════════════════════════════════════════════
         // SKILLS
-        //   [Cmt] [Fix] [Tst] [Ref] [Rev]  [BACK]  [Exp] [CUS]
+        //   [BACK] [Continue] [Commit] [Restart] [Chkpt]
+        //   [Diff] [MODE] [END]
         // ══════════════════════════════════════════════════════════
 
         private void OnSkills(Int32 pos)
@@ -239,21 +241,33 @@ namespace Loupedeck.AgentDeckPlugin.Folders
 
             var a = this.Plugin.State.GetSelectedAgent();
             if (a == null) { GoBack(); return; }
-            // pos 0-4 = management actions, pos 5 = BACK, pos 6 = MODE, pos 7 = END
+            // pos 0 = BACK, pos 1-5 = Skills[0-4], pos 6 = MODE, pos 7 = END
+            if (pos == 0) { GoBack(); return; }
+            if (pos >= 1 && pos <= 5)
+            {
+                var skill = Skills[pos - 1];
+                switch (skill.id)
+                {
+                    case "continue":
+                        if (a.Status == AgentStatus.Waiting)
+                            _ = this.Plugin.BridgeClient.SendCommand(a.Id, "approve");
+                        else
+                            _ = this.Plugin.BridgeClient.SendSkill(a.Id, "custom", "continue");
+                        GoBack();
+                        break;
+                    case "commit":
+                        _ = this.Plugin.BridgeClient.SendSkill(a.Id, "commit"); GoBack(); break;
+                    case "review":
+                        _ = this.Plugin.BridgeClient.SendSkill(a.Id, "custom", "/simplify review the changes"); GoBack(); break;
+                    case "checkpoint":
+                        _ = this.Plugin.BridgeClient.SendCommand(a.Id, "checkpoint"); break;
+                    case "diff":
+                        _ = this.Plugin.BridgeClient.SendFocusView("diff", a.Id); break;
+                }
+                return;
+            }
             switch (pos)
             {
-                case 0: _ = this.Plugin.BridgeClient.SendSkill(a.Id, "commit"); GoBack(); break;
-                case 1: _ = this.Plugin.BridgeClient.SendCommand(a.Id, "restart"); GoBack(); break;
-                case 2: _ = this.Plugin.BridgeClient.SendCommand(a.Id, "checkpoint"); break;
-                case 3: _ = this.Plugin.BridgeClient.SendFocusView("diff", a.Id); break;
-                case 4:
-                    if (a.Status == AgentStatus.Waiting)
-                        _ = this.Plugin.BridgeClient.SendCommand(a.Id, "approve");
-                    else
-                        _ = this.Plugin.BridgeClient.SendSkill(a.Id, "custom", "continue");
-                    GoBack();
-                    break;
-                case 5: GoBack(); break;
                 case 6: _ = this.Plugin.BridgeClient.SendCommand(a.Id, "cycle_mode"); break;
                 case 7: _ = this.Plugin.BridgeClient.SendCommand(a.Id, "kill"); GoBack(); break;
             }
@@ -261,10 +275,10 @@ namespace Loupedeck.AgentDeckPlugin.Folders
 
         private BitmapImage DrawSkills(Int32 pos, Int32 sz)
         {
-            if (pos < 5) { var s = Skills[pos]; return TileCtrl(s.lucide, s.label, s.color, sz); }
+            if (pos == 0) return TileCtrl("chevron-left", "BACK", new BitmapColor(50, 50, 50), sz);
+            if (pos >= 1 && pos <= 5) { var s = Skills[pos - 1]; return TileCtrl(s.lucide, s.label, s.color, sz); }
             return pos switch
             {
-                5 => TileCtrl("chevron-left", "BACK", new BitmapColor(50, 50, 50), sz),
                 6 => TileCtrl("settings", "MODE", new BitmapColor(45, 138, 120), sz),
                 7 => TileCtrl("icon-x", "END", new BitmapColor(180, 40, 40), sz),
                 _ => Empty(sz)
@@ -273,72 +287,121 @@ namespace Loupedeck.AgentDeckPlugin.Folders
 
         // ══════════════════════════════════════════════════════════
         // NEW AGENT
-        //   [cla] [gem] [cdx] [aid] [opc]  [BACK]  [--] [WKT]
+        //   [BACK] [CONFIGS] [cla] [gem] [cdx] [aid] [opc] [amp]
         // ══════════════════════════════════════════════════════════
 
         private void OnNewAgent(Int32 pos)
         {
-            if (pos < AgentTypes.Length) { _ = this.Plugin.BridgeClient.SendLaunch(".", AgentTypes[pos]); GoBack(); }
-            else switch (pos)
+            if (pos == 0) { GoBack(); return; }
+            if (pos == 1) { _previousView = "new-agent"; _view = "configs"; Refresh(); return; }
+            var ai = pos - 2;
+            if (ai >= 0 && ai < AgentTypes.Length)
             {
-                case 5: GoBack(); break;
-                case 7: _ = this.Plugin.BridgeClient.SendToggleWorktree(); this.Plugin.State.WorktreeEnabled = !this.Plugin.State.WorktreeEnabled; Refresh(); break;
+                var st = this.Plugin.State;
+                _ = this.Plugin.BridgeClient.SendLaunch(".", AgentTypes[ai],
+                    st.ThinkingOverride, st.ModeOverride, st.EffortOverride);
+                GoBack();
             }
         }
 
         private BitmapImage DrawNewAgent(Int32 pos, Int32 sz)
         {
-            if (pos < AgentTypes.Length)
+            if (pos == 0) return TileCtrl("chevron-left", "BACK", new BitmapColor(50, 50, 50), sz);
+            if (pos == 1) return TileCtrl("settings", "CONFIGS", new BitmapColor(60, 75, 100), sz);
+            var ai = pos - 2;
+            if (ai >= 0 && ai < AgentTypes.Length)
             {
-                var n = AgentTypes[pos];
+                var n = AgentTypes[ai];
                 var c = AgentColors.TryGetValue(n, out var cl) ? cl : new BitmapColor(80, 80, 80);
                 return TileNewAgent(Cap(n), n, c, sz);
             }
+            return Empty(sz);
+        }
+
+        // ══════════════════════════════════════════════════════════
+        // CONFIGS
+        //   [BACK] [WORKTREE] [THINKING] [MODE] [EFFORT]
+        // ══════════════════════════════════════════════════════════
+
+        private static readonly String[] ThinkingValues = { null, "low", "medium", "high" };
+        private static readonly String[] ModeValues = { null, "plan", "auto", "bypassPermissions" };
+        private static readonly String[] EffortValues = { null, "low", "medium", "high", "max" };
+
+        private void OnConfigs(Int32 pos)
+        {
+            var st = this.Plugin.State;
+            switch (pos)
+            {
+                case 0: GoBack(); return;
+                case 1:
+                    _ = this.Plugin.BridgeClient.SendToggleWorktree();
+                    st.WorktreeEnabled = !st.WorktreeEnabled;
+                    break;
+                case 2: st.ThinkingOverride = CycleValue(st.ThinkingOverride, ThinkingValues); break;
+                case 3: st.ModeOverride = CycleValue(st.ModeOverride, ModeValues); break;
+                case 4: st.EffortOverride = CycleValue(st.EffortOverride, EffortValues); break;
+                default: return;
+            }
+            Refresh();
+        }
+
+        private BitmapImage DrawConfigs(Int32 pos, Int32 sz)
+        {
+            var st = this.Plugin.State;
+            var gray = new BitmapColor(90, 90, 90);
             return pos switch
             {
-                5 => TileCtrl("chevron-left", "BACK", new BitmapColor(50, 50, 50), sz),
-                7 => TileCtrl("git-branch",
-                    this.Plugin.State.WorktreeEnabled ? "WORKTREE" : "NO WKTREE",
-                    this.Plugin.State.WorktreeEnabled ? new BitmapColor(45, 138, 78) : new BitmapColor(90, 90, 90), sz),
+                0 => TileCtrl("chevron-left", "BACK", new BitmapColor(50, 50, 50), sz),
+                1 => TileCtrl("git-branch",
+                    st.WorktreeEnabled ? "WORKTREE" : "NO WKTREE",
+                    st.WorktreeEnabled ? new BitmapColor(45, 138, 78) : gray, sz),
+                2 => TileCtrl("lightbulb",
+                    FlagLabel(st.ThinkingOverride, "THINKING"),
+                    st.ThinkingOverride != null ? new BitmapColor(180, 130, 40) : gray, sz),
+                3 => TileCtrl("settings",
+                    FlagLabel(st.ModeOverride, "MODE"),
+                    st.ModeOverride != null ? new BitmapColor(45, 138, 120) : gray, sz),
+                4 => TileCtrl("layers",
+                    FlagLabel(st.EffortOverride, "EFFORT"),
+                    st.EffortOverride != null ? new BitmapColor(100, 80, 160) : gray, sz),
                 _ => Empty(sz)
             };
+        }
+
+        private static String CycleValue(String current, String[] values)
+        {
+            var idx = Array.IndexOf(values, current);
+            return values[(idx + 1) % values.Length];
+        }
+
+        private static String FlagLabel(String value, String defaultLabel)
+        {
+            if (value == null) return defaultLabel;
+            if (value == "bypassPermissions") return "YOLO";
+            return value.ToUpperInvariant();
         }
 
         // ══════════════════════════════════════════════════════════
         // MENU
-        //   [a0] [a1] [a2] [a3] [a4]  [BACK]  [a5] [PG]
+        //   [BACK] [Confirm] [Pause] [End] [NextWait]
+        //   [Wait1st] [Err1st] [Rdy1st]
         // ══════════════════════════════════════════════════════════
 
         private void OnMenu(Int32 pos)
         {
-            // pos 0-4 = actions 0-4, pos 5 = BACK, pos 6 = action 5, pos 7 = PAGE
-            if (pos < 5) { var ai = _menuPage * 6 + pos; if (ai < MenuActions.Length) ExecMenu(MenuActions[ai].id); return; }
-            switch (pos)
-            {
-                case 5: GoBack(); break;
-                case 6: { var ai = _menuPage * 6 + 5; if (ai < MenuActions.Length) ExecMenu(MenuActions[ai].id); } break;
-                case 7: { var p = Math.Max(1, (Int32)Math.Ceiling(MenuActions.Length / 6.0)); _menuPage = (_menuPage + 1) % p; Refresh(); } break;
-            }
+            // pos 0 = BACK, pos 1-7 = MenuActions[0-6]
+            if (pos == 0) { GoBack(); return; }
+            var ai = pos - 1;
+            if (ai >= 0 && ai < MenuActions.Length) ExecMenu(MenuActions[ai].id);
         }
 
         private BitmapImage DrawMenu(Int32 pos, Int32 sz)
         {
-            // pos 0-4 = page actions 0-4
-            if (pos < 5) { var ai = _menuPage * 6 + pos; return ai < MenuActions.Length ? TileCtrl(MenuActions[ai].lucide, MenuActions[ai].label, MenuActions[ai].color, sz) : Empty(sz); }
-            return pos switch
-            {
-                5 => TileCtrl("chevron-left", "BACK", new BitmapColor(50, 50, 50), sz),
-                6 => DrawMenuAction(_menuPage * 6 + 5, sz),
-                7 => TileCtrl("layers", "PAGE", new BitmapColor(50, 50, 60), sz),
-                _ => Empty(sz)
-            };
-        }
-
-        private static BitmapImage DrawMenuAction(Int32 ai, Int32 sz)
-        {
-            return ai < MenuActions.Length
-                ? TileCtrl(MenuActions[ai].lucide, MenuActions[ai].label, MenuActions[ai].color, sz)
-                : Empty(sz);
+            if (pos == 0) return TileCtrl("chevron-left", "BACK", new BitmapColor(50, 50, 50), sz);
+            var ai = pos - 1;
+            if (ai >= 0 && ai < MenuActions.Length)
+                return TileCtrl(MenuActions[ai].lucide, MenuActions[ai].label, MenuActions[ai].color, sz);
+            return Empty(sz);
         }
 
         private void ExecMenu(String id)
@@ -353,13 +416,31 @@ namespace Loupedeck.AgentDeckPlugin.Folders
                     var w = agents.FirstOrDefault(a => a.Status == AgentStatus.Waiting);
                     if (w != null) { this.Plugin.State.SelectedAgentId = w.Id; _ = this.Plugin.BridgeClient.SendOpenTerminal(w.Id); _view = "approval"; Refresh(); return; }
                     break;
+                case "show-waiting":
+                    SortAgentsFirst(AgentStatus.Waiting);
+                    break;
+                case "show-errors":
+                    SortAgentsFirst(AgentStatus.Error);
+                    break;
+                case "show-ready":
+                    SortAgentsFirst(AgentStatus.Idle);
+                    break;
             }
             GoBack();
         }
 
+        private void SortAgentsFirst(AgentStatus status)
+        {
+            var agents = this.Plugin.State.Agents;
+            var sorted = agents.OrderByDescending(a => a.Status == status).ToList();
+            agents.Clear();
+            foreach (var a in sorted) agents.Add(a);
+            _dashPage = 0;
+        }
+
         // ── Navigation & Refresh ────────────────────────────────
 
-        private void GoBack() { _view = "dashboard"; Refresh(); }
+        private void GoBack() { _view = _previousView ?? "dashboard"; _previousView = "dashboard"; Refresh(); }
 
         private void Refresh()
         {

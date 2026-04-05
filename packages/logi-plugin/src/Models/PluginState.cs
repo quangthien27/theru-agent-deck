@@ -19,6 +19,9 @@ namespace Loupedeck.AgentDeckPlugin.Models
         public List<AgentSession> Agents { get; set; } = new List<AgentSession>();
         public String SelectedAgentId { get; set; }
         public Boolean WorktreeEnabled { get; set; } = true;
+        public String ThinkingOverride { get; set; } // null, "low", "medium", "high"
+        public String ModeOverride { get; set; }    // null, "plan", "auto", "bypassPermissions"
+        public String EffortOverride { get; set; }  // null, "low", "medium", "high", "max"
         public Int32 ConnectedWindowCount { get; set; }
         public Int32 RingScrollOffset { get; set; }
         public Int32 RingFileIndex { get; set; }

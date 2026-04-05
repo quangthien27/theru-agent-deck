@@ -39,6 +39,7 @@ namespace Loupedeck.AgentDeckPlugin.Services
             _jsonOptions = new JsonSerializerOptions
             {
                 PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+                DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull,
                 Converters = { new JsonStringEnumConverter(JsonNamingPolicy.CamelCase) }
             };
         }
@@ -251,7 +252,8 @@ namespace Loupedeck.AgentDeckPlugin.Services
             }
         }
 
-        public async Task SendLaunch(String projectPath, String agent = "claude")
+        public async Task SendLaunch(String projectPath, String agent = "claude",
+            String thinking = null, String mode = null, String effort = null)
         {
             if (_socket?.State != WebSocketState.Open)
             {
@@ -262,7 +264,10 @@ namespace Loupedeck.AgentDeckPlugin.Services
             {
                 type = "launch",
                 projectPath,
-                agent
+                agent,
+                thinking,
+                mode,
+                effort
             };
 
             var json = JsonSerializer.Serialize(message, _jsonOptions);

@@ -65,6 +65,9 @@ export interface LaunchAgent {
   projectPath: string;
   agent: string;
   message?: string;
+  thinking?: string; // 'low' | 'medium' | 'high'
+  mode?: string;     // 'plan' | 'auto' | 'bypassPermissions'
+  effort?: string;   // 'low' | 'medium' | 'high' | 'max'
 }
 
 export interface OpenTerminal {
@@ -117,7 +120,7 @@ export interface SettingsUpdate {
 
 export type ServerMessage = StateUpdate | AgentEvent | FocusAgent | DiffPosition | SettingsUpdate;
 
-export const SUPPORTED_AGENTS = ['claude', 'gemini', 'aider', 'codex', 'opencode'] as const;
+export const SUPPORTED_AGENTS = ['claude', 'gemini', 'aider', 'codex', 'opencode', 'amp'] as const;
 export type AgentType = typeof SUPPORTED_AGENTS[number];
 
 export function agentCommand(agent: AgentType): string {
@@ -127,5 +130,6 @@ export function agentCommand(agent: AgentType): string {
     case 'aider': return 'aider';
     case 'codex': return 'codex';
     case 'opencode': return 'opencode';
+    case 'amp': return 'amp';
   }
 }

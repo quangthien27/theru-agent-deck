@@ -240,7 +240,11 @@ function handleClientMessage(msg: ClientMessage): void {
         vscode.window.showWarningMessage('AgentDeck: No workspace folder open to launch agent in.');
         break;
       }
-      agentManager.launch(msg.agent as any, projectPath, msg.message);
+      agentManager.launch(msg.agent as any, projectPath, msg.message, {
+        thinking: msg.thinking,
+        mode: msg.mode,
+        effort: msg.effort,
+      });
       break;
     }
 

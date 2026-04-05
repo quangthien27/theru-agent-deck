@@ -51,10 +51,16 @@ namespace Loupedeck.AgentDeckPlugin
             {
                 var selectedId = this.State.SelectedAgentId;
                 var worktreeEnabled = this.State.WorktreeEnabled;
+                var thinkingOverride = this.State.ThinkingOverride;
+                var modeOverride = this.State.ModeOverride;
+                var effortOverride = this.State.EffortOverride;
                 var windowCount = state.ConnectedWindowCount;
                 this.State = state;
                 this.State.SelectedAgentId = selectedId;
                 this.State.WorktreeEnabled = worktreeEnabled;
+                this.State.ThinkingOverride = thinkingOverride;
+                this.State.ModeOverride = modeOverride;
+                this.State.EffortOverride = effortOverride;
                 this.State.ConnectedWindowCount = windowCount;
                 this.RefreshAll();
                 this.NotifyDashboardFolders();
