@@ -163,24 +163,21 @@ function isClaudeBusy(lastLines: string[], recentLower: string): boolean {
       || tail.includes('tell claude what to change') || tail.includes('would you like to proceed')) {
     return false;
   }
-  // Permission mode indicators (TUI-stripped variants — no spaces in cursor-positioned text)
-  if (tail.includes('accepteditson') || tail.includes('planmodeon')
-      || tail.includes('shift+tabtocycle') || tail.includes('shift+tab to cycle')) {
-    return false;
+  // Mode bar with prompt at tail = idle, not busy (stale spinners from before interruption)
+  // Pattern: "accept edits on" or "approve edits" + ❯ prompt in the tail
+  if ((tail.includes('accept edits on') || tail.includes('approve edits'))
+      && (tail.includes('❯') || tail.includes('>'))) {
+    // Only suppress if no fresh spinners in the very last ~200 chars
+    const veryTail = tail.slice(-200);
+    let hasSpinner = false;
+    for (const ch of veryTail) {
+      if (SPINNER_SET.has(ch)) { hasSpinner = true; break; }
+    }
+    if (!hasSpinner) return false;
   }
-  // Claude shows "{whimsical word} for {N}s ❯" when finished (Brewed, Cooked, Crunched, etc.)
-  // Must NOT match the progress indicator "(1m 16s · ↓1.9k tokens)" which appears during work.
-  // Completion format: "for Xs ❯" or "for Xm Ys ❯" — not inside parentheses, no "·" after.
-  if (/for \d+m?\s?\d*s ❯/.test(tail) && !tail.match(/for \d+m?\s?\d*s\s*·/)) {
-    return false;
-  }
-
-  // Check explicit busy text
-  if (recentLower.includes('ctrl+c to interrterrupt') || recentLower.includes('esc to interrterrupt')) {
-    return true;
-  }
-
-  // Check spinner chars in last 10 lines (skip box-drawing lines)
+  // Check spinner chars FIRST — spinners are the strongest working signal for Claude.
+  // Claude's TUI redraws the full screen (including the persistent mode bar and file
+  // markers) while tools run, so those UI elements must NOT suppress spinner detection.
   const checkLines = lastLines.slice(-10);
   for (const line of checkLines) {
     const trimmed = line.trim();
@@ -192,11 +189,24 @@ function isClaudeBusy(lastLines: string[], recentLower: string): boolean {
     }
   }
 
-  // Check whimsical words with timing info (ellipsis + tokens)
-  if (recentLower.includes('…') && recentLower.includes('tokens')) {
+  // Claude shows "{whimsical word} for {N}s ❯" when finished (Brewed, Cooked, Crunched, etc.)
+  // Must NOT match the progress indicator "(1m 16s · ↓1.9k tokens)" which appears during work.
+  // Completion format: "for Xs ❯" or "for Xm Ys ❯" — not inside parentheses, no "·" after.
+  if (/for \d+m?\s?\d*s ❯/.test(tail) && !tail.match(/for \d+m?\s?\d*s\s*·/)) {
+    return false;
+  }
+
+  // Check explicit busy text (use tail — stale "ctrl+c" lingers in full buffer)
+  if (tail.includes('ctrl+c to interrterrupt') || tail.includes('esc to interrterrupt')) {
     return true;
   }
-  if (recentLower.includes('thinking') && recentLower.includes('tokens')) {
+
+  // Check whimsical words with timing info (ellipsis + tokens)
+  // Use tail only — stale "tokens" from earlier output causes false positives
+  if (tail.includes('…') && tail.includes('tokens')) {
+    return true;
+  }
+  if (tail.includes('thinking') && tail.includes('tokens')) {
     return true;
   }
 
@@ -260,31 +270,22 @@ function isClaudeIdle(lastLines: string[], recentContent: string): boolean {
     const clean = line.trim().replace(/\u00A0/g, ' ');
     if (clean === '>' || clean === '❯' || clean === '> ' || clean === '❯ ') { hasPrompt = true; break; }
     if (clean.startsWith('❯ Try ') || clean.startsWith('> Try ')) { hasPrompt = true; break; }
+    // TUI cursor positioning may put ❯ on the same line as the mode bar
+    // (e.g. "accept edits on (shift+tab to cycle) ⧉ In foo.ts ❯").
+    // Check if line ends with the prompt character.
+    if (clean.endsWith(' ❯') || clean.endsWith(' >')) { hasPrompt = true; break; }
   }
 
-  // Permission mode bar = idle (Claude finished, showing mode indicator)
-  // Use the same -800 window as the isClaudeBusy guard so both checks see
-  // identical content — avoids the gap where the guard fires (busy=false) but
-  // the idle check's smaller window misses the text (idle=false → no match).
-  const tail = recentContent.slice(-800);
-  if (tail.includes('accepteditson') || tail.includes('accept edits on')
-      || tail.includes('planmodeon') || tail.includes('plan mode on')) {
-    if (tail.includes('shift+tabtocycle') || tail.includes('shift+tab to cycle')) {
-      return true;
-    }
-  }
-  // "accept edits on" file browser: ⧉ marker appears in partial TUI updates
-  // (e.g. "⧉ In src/foo.ts", "⧉ 1 line selected") while the user cycles through
-  // proposed edits. These keep arriving even after the status bar text scrolls
-  // out of the detection window, so detect them directly as idle.
-  if (tail.includes('⧉ In ') || tail.includes('⧉ 1 line')) {
-    return true;
-  }
+  // NOTE: The permission mode bar ("accept edits on (shift+tab to cycle)") and
+  // file markers ("⧉ In src/foo.ts") are persistent TUI elements visible during
+  // ALL states — including while tools run. Do NOT use them as standalone idle
+  // signals. The ❯ prompt is the real idle indicator.
 
   if (!hasPrompt) return false;
 
   // If interactive selection UI is active in the TAIL, ❯ is a cursor not idle.
   // Only check the tail (~500 chars) — stale patterns further back are irrelevant.
+  const tail = recentContent.slice(-800);
   if (hasClaudeInteractiveUI(tail)) return false;
 
   return true;

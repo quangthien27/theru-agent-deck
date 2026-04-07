@@ -299,7 +299,7 @@ namespace Loupedeck.AgentDeckPlugin.Folders
             {
                 var st = this.Plugin.State;
                 _ = this.Plugin.BridgeClient.SendLaunch(".", AgentTypes[ai],
-                    st.ThinkingOverride, st.ModeOverride, st.EffortOverride);
+                    st.ModeOverride, st.EffortOverride);
                 GoBack();
             }
         }
@@ -320,10 +320,9 @@ namespace Loupedeck.AgentDeckPlugin.Folders
 
         // ══════════════════════════════════════════════════════════
         // CONFIGS
-        //   [BACK] [WORKTREE] [THINKING] [MODE] [EFFORT]
+        //   [BACK] [WORKTREE] [MODE] [EFFORT]
         // ══════════════════════════════════════════════════════════
 
-        private static readonly String[] ThinkingValues = { null, "low", "medium", "high" };
         private static readonly String[] ModeValues = { null, "plan", "auto", "bypassPermissions" };
         private static readonly String[] EffortValues = { null, "low", "medium", "high", "max" };
 
@@ -337,9 +336,8 @@ namespace Loupedeck.AgentDeckPlugin.Folders
                     _ = this.Plugin.BridgeClient.SendToggleWorktree();
                     st.WorktreeEnabled = !st.WorktreeEnabled;
                     break;
-                case 2: st.ThinkingOverride = CycleValue(st.ThinkingOverride, ThinkingValues); break;
-                case 3: st.ModeOverride = CycleValue(st.ModeOverride, ModeValues); break;
-                case 4: st.EffortOverride = CycleValue(st.EffortOverride, EffortValues); break;
+                case 2: st.ModeOverride = CycleValue(st.ModeOverride, ModeValues); break;
+                case 3: st.EffortOverride = CycleValue(st.EffortOverride, EffortValues); break;
                 default: return;
             }
             Refresh();
@@ -355,13 +353,10 @@ namespace Loupedeck.AgentDeckPlugin.Folders
                 1 => TileCtrl("git-branch",
                     st.WorktreeEnabled ? "WORKTREE" : "NO WKTREE",
                     st.WorktreeEnabled ? new BitmapColor(45, 138, 78) : gray, sz),
-                2 => TileCtrl("lightbulb",
-                    FlagLabel(st.ThinkingOverride, "THINKING"),
-                    st.ThinkingOverride != null ? new BitmapColor(180, 130, 40) : gray, sz),
-                3 => TileCtrl("settings",
+                2 => TileCtrl("settings",
                     FlagLabel(st.ModeOverride, "MODE"),
                     st.ModeOverride != null ? new BitmapColor(45, 138, 120) : gray, sz),
-                4 => TileCtrl("layers",
+                3 => TileCtrl("layers",
                     FlagLabel(st.EffortOverride, "EFFORT"),
                     st.EffortOverride != null ? new BitmapColor(100, 80, 160) : gray, sz),
                 _ => Empty(sz)
@@ -480,12 +475,43 @@ namespace Loupedeck.AgentDeckPlugin.Folders
             using var b = new BitmapBuilder(sz, sz);
             b.Clear(SClr(agent.Status));
 
-            // Name — large, upper area
-            b.DrawText(Trn(agent.Name, 5), 0, 0, sz, sz / 2, BitmapColor.White, sz / 4);
+            // Name — upper area, 2 rows if needed
+            var name = agent.Name?.ToUpperInvariant() ?? "?";
+            var fontSize = sz * 17 / 100;  // ~20px at 116 — fits more chars without overflow
+            var pad = sz * 10 / 100; // horizontal padding (~12px each side at 116)
+            var tw = sz - pad * 2;   // text width
+            var maxPerRow = 7; // fits visually within padded tile width
+            var rowH = sz * 22 / 100;
+            var topY = pad; // consistent top padding for 1 or 2 rows
 
-            // Status text — medium, lower area
-            b.DrawText(STxt(agent.Status), 0, sz * 50 / 100, sz, sz * 30 / 100,
-                new BitmapColor(255, 255, 255, 200), sz / 6);
+            if (name.Length <= maxPerRow)
+            {
+                b.DrawText(name, pad, topY, tw, rowH, BitmapColor.White, fontSize);
+            }
+            else
+            {
+                // Split into 2 rows — prefer word boundary (space/hyphen)
+                var split = -1;
+                for (var i = Math.Min(name.Length - 1, maxPerRow); i > 0; i--)
+                {
+                    if (name[i] == ' ' || name[i] == '-') { split = i; break; }
+                }
+                if (split <= 0) split = Math.Min(maxPerRow, name.Length);
+
+                var isSep = split < name.Length && (name[split] == ' ' || name[split] == '-');
+                var row1 = name[..split].TrimEnd(' ', '-');
+                var row2 = name[(split + (isSep ? 1 : 0))..];
+                if (row2.Length > maxPerRow) row2 = row2[..maxPerRow];
+
+                b.DrawText(row1, pad, topY, tw, rowH, BitmapColor.White, fontSize);
+                b.DrawText(row2, pad, topY + rowH, tw, rowH, BitmapColor.White, fontSize);
+            }
+
+            // Status text — bottom-right
+            var statusFont = sz / 6;
+            var statusH = sz * 20 / 100;
+            b.DrawText(STxt(agent.Status), sz * 35 / 100, sz - statusH - pad / 2, sz * 65 / 100 - pad, statusH,
+                new BitmapColor(255, 255, 255, 200), statusFont);
 
             // Agent icon (bottom-left) or abbreviation fallback
             var agentType = agent.Agent?.ToLowerInvariant() ?? "";
@@ -639,7 +665,7 @@ namespace Loupedeck.AgentDeckPlugin.Folders
         {
             AgentStatus.Idle    => "ready",
             AgentStatus.Working => "running",
-            AgentStatus.Waiting => "INPUT!",
+            AgentStatus.Waiting => "input !",
             AgentStatus.Error   => "error",
             _                   => "offline"
         };

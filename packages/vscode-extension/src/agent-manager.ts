@@ -37,6 +37,10 @@ interface ManagedAgent {
   lastBellTime: number;
   /** Timestamp of most recent data chunk received from PTY (ms). 0 = no data yet. */
   lastDataChunkTime: number;
+  /** Buffer length at last status check — used to detect active output growth. */
+  lastStatusBufLen: number;
+  /** Stripped content length at last status check — measures real text growth, not escape sequences. */
+  lastStrippedLen: number;
 }
 
 export class AgentManager extends EventEmitter {
@@ -167,11 +171,13 @@ export class AgentManager extends EventEmitter {
       inOscSequence: false,
       lastBellTime: 0,
       lastDataChunkTime: 0,
+      lastStatusBufLen: 0,
+      lastStrippedLen: 0,
     };
   }
 
   launch(agentType: AgentType, projectPath: string, message?: string,
-    opts?: { thinking?: string; mode?: string; effort?: string }): string {
+    opts?: { mode?: string; effort?: string }): string {
     const id = `w${this.port}-agent-${this.nextId++}`;
     const worktreeEnabled = vscode.workspace.getConfiguration('agentdeck').get<boolean>('worktree.enabled', true);
 
@@ -187,7 +193,7 @@ export class AgentManager extends EventEmitter {
 
   private async launchWithWorktree(
     id: string, agentType: AgentType, projectPath: string, message?: string,
-    opts?: { thinking?: string; mode?: string; effort?: string },
+    opts?: { mode?: string; effort?: string },
   ): Promise<void> {
     const dirName = projectPath.split('/').filter(Boolean).pop() || 'proj';
     const ts = Date.now().toString(36).slice(-4); // short 4-char timestamp
@@ -308,7 +314,7 @@ export class AgentManager extends EventEmitter {
   private launchInDirectory(
     id: string, agentType: AgentType, cwd: string, message?: string,
     worktreePath?: string, worktreeBranch?: string,
-    opts?: { thinking?: string; mode?: string; effort?: string },
+    opts?: { mode?: string; effort?: string },
   ): void {
     const cmd = agentCommand(agentType);
 
@@ -320,16 +326,59 @@ export class AgentManager extends EventEmitter {
       }
     }
 
-    // CLI flags from launch options (currently Claude Code only)
-    if (agentType === 'claude') {
-      if (opts?.thinking) {
-        const budgetMap: Record<string, string> = { low: '5000', medium: '20000', high: '50000' };
-        const tokens = budgetMap[opts.thinking] || opts.thinking;
-        args.push('--thinking-budget-tokens', tokens);
+    // CLI flags from launch options — mapped per agent
+    if (opts?.mode) {
+      switch (agentType) {
+        case 'claude':
+          if (opts.mode === 'bypassPermissions') args.push('--dangerously-skip-permissions');
+          else args.push('--permission-mode', opts.mode);
+          break;
+        case 'gemini':
+          // gemini: --approval-mode {default, auto_edit, yolo, plan}
+          if (opts.mode === 'bypassPermissions') args.push('--approval-mode', 'yolo');
+          else if (opts.mode === 'auto') args.push('--approval-mode', 'auto_edit');
+          else if (opts.mode === 'plan') args.push('--approval-mode', 'plan');
+          break;
+        case 'codex':
+          // codex: -a {untrusted, on-failure, on-request, never} + -s {read-only, workspace-write, danger-full-access}
+          if (opts.mode === 'bypassPermissions') args.push('--dangerously-bypass-approvals-and-sandbox');
+          else if (opts.mode === 'auto') args.push('--full-auto');
+          break;
+        case 'aider':
+          // aider: --yes-always for auto-approve
+          if (opts.mode === 'auto' || opts.mode === 'bypassPermissions') args.push('--yes-always');
+          break;
+        case 'amp':
+          // amp: --dangerously-allow-all
+          if (opts.mode === 'bypassPermissions') args.push('--dangerously-allow-all');
+          break;
+        // opencode: no permission flags
       }
-      if (opts?.mode === 'bypassPermissions') args.push('--dangerously-skip-permissions');
-      else if (opts?.mode) args.push('--permission-mode', opts.mode === 'auto' ? 'autoApprove' : opts.mode);
-      if (opts?.effort) args.push('--effort', opts.effort);
+    }
+    if (opts?.effort) {
+      switch (agentType) {
+        case 'claude':
+          args.push('--effort', opts.effort);
+          break;
+        case 'aider': {
+          // aider: --reasoning-effort maps low/medium/high/max to numeric-ish values
+          const aiderEffort: Record<string, string> = { low: '0.3', medium: '0.6', high: '0.9', max: '1.0' };
+          args.push('--reasoning-effort', aiderEffort[opts.effort] || opts.effort);
+          break;
+        }
+        case 'opencode':
+          // opencode: --variant {minimal, high, max, ...}
+          if (opts.effort === 'low') args.push('--variant', 'minimal');
+          else if (opts.effort === 'high' || opts.effort === 'max') args.push('--variant', opts.effort);
+          break;
+        case 'amp':
+          // amp: -m {rush, smart, deep, ...}
+          if (opts.effort === 'low') args.push('-m', 'rush');
+          else if (opts.effort === 'medium') args.push('-m', 'smart');
+          else if (opts.effort === 'high' || opts.effort === 'max') args.push('-m', 'deep');
+          break;
+        // gemini, codex: no effort flags
+      }
     }
 
     const dirName = cwd.split('/').filter(Boolean).pop() || agentType;
@@ -739,8 +788,38 @@ export class AgentManager extends EventEmitter {
     for (const agent of this.agents.values()) {
       const prev = agent.status;
       const bufLen = agent.outputBuffer.length;
+      agent.lastStatusBufLen = bufLen;
+
+      // Measure STRIPPED content growth — raw buffer growth includes escape sequences
+      // (TUI redraws, cursor positioning) that inflate the count without real output.
+      const strippedTail = stripAnsi(agent.outputBuffer.slice(-2000));
+      const strippedLen = strippedTail.length;
+      const strippedGrowth = strippedLen - agent.lastStrippedLen;
+      agent.lastStrippedLen = strippedLen;
 
       let result = detectStatus(agent.outputBuffer, agent.status, agent.agent);
+
+      // Buffer growth guard: if MEANINGFUL content grew significantly since last check,
+      // the agent is actively producing output — suppress false idle/waiting transitions.
+      // Uses stripped content growth (not raw bytes) to avoid being fooled by TUI escape
+      // sequences that add raw bytes without any printable text.
+      if (strippedGrowth > 100 && prev === 'working'
+          && (result.status === 'idle' || result.status === 'error')
+          && result.confidence < 0.98) {
+        this.log.appendLine(`[GUARD ${agent.id}] suppressed ${prev} → ${result.status} (strippedGrowth: ${strippedGrowth}, conf: ${result.confidence.toFixed(2)})`);
+        result = { status: 'working', confidence: 0.7 };
+      }
+
+      // Empty-tail fallback: if the stripped tail is empty/whitespace-only and agent is
+      // "working", the buffer is all escape sequences — the TUI has settled with no
+      // meaningful content for the heuristic to match. Treat as idle.
+      if (prev === 'working' && result.confidence === 0.0) {
+        const trimmedTail = strippedTail.replace(/\s+/g, '').trim();
+        if (trimmedTail.length < 20) {
+          result = { status: 'idle', confidence: 0.4 };
+          this.log.appendLine(`[EMPTY-TAIL ${agent.id}] stripped tail too short (${trimmedTail.length} chars) → synthesizing idle`);
+        }
+      }
 
       // Silence-based fallback: if heuristic found no pattern match (confidence=0.0)
       // and the agent has been quiet longer than its silence threshold, synthesize idle.

@@ -253,7 +253,7 @@ namespace Loupedeck.AgentDeckPlugin.Services
         }
 
         public async Task SendLaunch(String projectPath, String agent = "claude",
-            String thinking = null, String mode = null, String effort = null)
+            String mode = null, String effort = null)
         {
             if (_socket?.State != WebSocketState.Open)
             {
@@ -265,7 +265,6 @@ namespace Loupedeck.AgentDeckPlugin.Services
                 type = "launch",
                 projectPath,
                 agent,
-                thinking,
                 mode,
                 effort
             };

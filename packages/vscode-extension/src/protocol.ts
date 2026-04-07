@@ -65,7 +65,6 @@ export interface LaunchAgent {
   projectPath: string;
   agent: string;
   message?: string;
-  thinking?: string; // 'low' | 'medium' | 'high'
   mode?: string;     // 'plan' | 'auto' | 'bypassPermissions'
   effort?: string;   // 'low' | 'medium' | 'high' | 'max'
 }

@@ -241,7 +241,6 @@ function handleClientMessage(msg: ClientMessage): void {
         break;
       }
       agentManager.launch(msg.agent as any, projectPath, msg.message, {
-        thinking: msg.thinking,
         mode: msg.mode,
         effort: msg.effort,
       });

@@ -189,12 +189,12 @@ namespace Loupedeck.AgentDeckPlugin.Services
         }
 
         public async Task SendLaunch(String projectPath, String agent = "claude",
-            String thinking = null, String mode = null, String effort = null)
+            String mode = null, String effort = null)
         {
             var client = GetFocusedOrPrimaryClient();
             if (client != null)
             {
-                await client.SendLaunch(projectPath, agent, thinking, mode, effort);
+                await client.SendLaunch(projectPath, agent, mode, effort);
             }
         }
 
