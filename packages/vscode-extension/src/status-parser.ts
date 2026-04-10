@@ -112,7 +112,7 @@ function matchesCommonPrompts(content: string): boolean {
 
 const SPINNER_CHARS = [
   '⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏', // braille
-  '✳', '✽', '✶', '✢', // Claude 2.1.25+ asterisk spinner
+  '✳', '✽', '✶', '✢', '✻', // Claude 2.1.25+ asterisk spinner
 ];
 const SPINNER_SET = new Set(SPINNER_CHARS);
 

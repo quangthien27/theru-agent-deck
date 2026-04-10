@@ -161,7 +161,7 @@ export class AgentManager extends EventEmitter {
     return {
       id,
       agent: agentType,
-      name: workspaceName.slice(0, 8).toUpperCase(),
+      name: workspaceName.slice(0, 14).toUpperCase(),
       projectPath,
       createdAt: new Date().toISOString(),
       status: 'working',
@@ -799,11 +799,26 @@ export class AgentManager extends EventEmitter {
 
       let result = detectStatus(agent.outputBuffer, agent.status, agent.agent);
 
+      // Silence detection: how long since the agent last sent any data.
+      // TUI agents stream spinner updates every ~100-200ms while working — sustained
+      // silence means they're done even when buffer patterns are ambiguous.
+      const SILENCE_THRESHOLDS: Record<string, number> = {
+        claude:   2000,   // spinners fire ~every 100ms — 2s silence = definitely done
+        gemini:   5000,
+        opencode: 5000,
+        codex:    5000,
+        aider:   10000,  // aider can pause several seconds during model inference
+      };
+      const silenceThreshold = SILENCE_THRESHOLDS[agent.agent] ?? 10000;
+      const silenceMs = agent.lastDataChunkTime > 0 ? Date.now() - agent.lastDataChunkTime : 0;
+      const isSilent = silenceMs > silenceThreshold;
+
       // Buffer growth guard: if MEANINGFUL content grew significantly since last check,
       // the agent is actively producing output — suppress false idle/waiting transitions.
       // Uses stripped content growth (not raw bytes) to avoid being fooled by TUI escape
       // sequences that add raw bytes without any printable text.
-      if (strippedGrowth > 100 && prev === 'working'
+      // Skip guard when agent has gone silent — trust the heuristic if no new data.
+      if (!isSilent && strippedGrowth > 100 && prev === 'working'
           && (result.status === 'idle' || result.status === 'error')
           && result.confidence < 0.98) {
         this.log.appendLine(`[GUARD ${agent.id}] suppressed ${prev} → ${result.status} (strippedGrowth: ${strippedGrowth}, conf: ${result.confidence.toFixed(2)})`);
@@ -821,24 +836,13 @@ export class AgentManager extends EventEmitter {
         }
       }
 
-      // Silence-based fallback: if heuristic found no pattern match (confidence=0.0)
-      // and the agent has been quiet longer than its silence threshold, synthesize idle.
-      // TUI agents stream spinner updates every ~100-200ms while working — sustained
-      // silence means they're done even when buffer patterns are ambiguous.
-      if (result.confidence === 0.0 && agent.status === 'working' && agent.lastDataChunkTime > 0) {
-        const silenceMs = Date.now() - agent.lastDataChunkTime;
-        const SILENCE_THRESHOLDS: Record<string, number> = {
-          claude:   2000,   // spinners fire ~every 100ms — 2s silence = definitely done
-          gemini:   5000,
-          opencode: 5000,
-          codex:    5000,
-          aider:   10000,  // aider can pause several seconds during model inference
-        };
-        const silenceThreshold = SILENCE_THRESHOLDS[agent.agent] ?? 10000;
-        if (silenceMs > silenceThreshold) {
-          result = { status: 'idle', confidence: 0.4 };
-          this.log.appendLine(`[SILENCE ${agent.id}] ${silenceMs}ms quiet → synthesizing idle (agent: ${agent.agent})`);
-        }
+      // Silence-based fallback: if agent has been quiet longer than its threshold and
+      // is still "working", it's done — regardless of heuristic confidence.
+      // The guard above may have kept result as "working" from a previous cycle, but
+      // once output stops, silence is the strongest signal.
+      if (isSilent && prev === 'working') {
+        result = { status: 'idle', confidence: 0.4 };
+        this.log.appendLine(`[SILENCE ${agent.id}] ${silenceMs}ms quiet → synthesizing idle (agent: ${agent.agent})`);
       }
 
       agent.status = result.status;
@@ -888,6 +892,29 @@ export class AgentManager extends EventEmitter {
       if (agent.status === prev && agent.status === 'working' && bufLen > 200) {
         const count = (this.stuckCount.get(agent.id) || 0) + 1;
         this.stuckCount.set(agent.id, count);
+        if (count >= 3) {
+          // Spinner animation may be masking the real status. Strip spinner chars
+          // from the buffer and re-evaluate — if no real busy signal remains,
+          // the agent is likely done (just animating).
+          // eslint-disable-next-line no-control-regex
+          const spinnerRe = /[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏✳✽✶✢✻]/g;
+          const cleanBuffer = agent.outputBuffer.replace(spinnerRe, '');
+          const recheck = detectStatus(cleanBuffer, 'working', agent.agent);
+          if (recheck.status !== 'working') {
+            agent.status = recheck.status;
+            changed = true;
+            this.stuckCount.set(agent.id, 0);
+            this.log.appendLine(`[UNSTUCK ${agent.id}] spinner-stripped recheck: working → ${recheck.status} (conf: ${recheck.confidence.toFixed(2)})`);
+            this.emit('statusChange', agent.id, 'working', agent.status);
+          } else if (recheck.confidence === 0.0) {
+            // No busy or idle signal with spinners stripped → animation only, synthesize idle
+            agent.status = 'idle';
+            changed = true;
+            this.stuckCount.set(agent.id, 0);
+            this.log.appendLine(`[UNSTUCK ${agent.id}] no signal after spinner strip → synthesizing idle (agent: ${agent.agent})`);
+            this.emit('statusChange', agent.id, 'working', 'idle');
+          }
+        }
         if (count === 5) {
           const tail = stripAnsi(agent.outputBuffer.slice(-800)).replace(/\s+/g, ' ').trim().slice(-500);
           this.log.appendLine(`[STUCK ${agent.id}] still working after ${count} checks (agent: ${agent.agent}, buf: ${bufLen})`);

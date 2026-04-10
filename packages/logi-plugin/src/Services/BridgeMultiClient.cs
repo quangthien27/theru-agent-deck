@@ -117,9 +117,10 @@ namespace Loupedeck.AgentDeckPlugin.Services
 
             lock (_lock)
             {
-                foreach (var agents in _windowStates.Values)
+                // Sort by port to keep stable agent order across refreshes
+                foreach (var port in _windowStates.Keys.OrderBy(p => p))
                 {
-                    merged.Agents.AddRange(agents);
+                    merged.Agents.AddRange(_windowStates[port]);
                 }
             }
 

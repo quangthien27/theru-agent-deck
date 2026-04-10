@@ -28,6 +28,9 @@ namespace Loupedeck.AgentDeckPlugin.Folders
         private DateTime _viewSwitchTime = DateTime.MinValue;
         private const Int32 CooldownMs = 700;
 
+        // Persistent sort: null = insertion order, otherwise sort that status first
+        private AgentStatus? _sortByStatus = null;
+
         // Icon caches (loaded from embedded resources)
         private static readonly Dictionary<String, BitmapImage> AgentIconCache = new();
         private static readonly Dictionary<String, BitmapImage> LucideCache = new();
@@ -37,10 +40,10 @@ namespace Loupedeck.AgentDeckPlugin.Folders
 
         private static readonly (String id, String label, String lucide, BitmapColor color)[] Skills =
         {
-            ("continue",   "Continue",  "play",        new BitmapColor(30, 120, 50)),
             ("commit",     "Commit",    "check",       new BitmapColor(30, 120, 50)),
             ("review",     "Review",    "icon-code",        new BitmapColor(45, 130, 130)),
-            ("checkpoint", "Chkpt",     "hash",        new BitmapColor(50, 100, 180)),
+            // ("checkpoint", "Chkpt",     "hash",        new BitmapColor(50, 100, 180)),
+            ("clear",      "Clear",     "eraser",      new BitmapColor(80, 80, 140)),
             ("diff",       "Diff",      "eye",         new BitmapColor(136, 85, 187)),
         };
 
@@ -111,7 +114,7 @@ namespace Loupedeck.AgentDeckPlugin.Folders
                 "plus", "menu", "chevron-left", "chevron-up", "chevron-down", "chevron-right",
                 "check", "icon-x", "keyboard", "message-circle", "git-branch", "layers",
                 "settings", "circle-pause", "terminal", "undo-2", "play", "circle-dot",
-                "hash", "rotate-ccw", "wrench", "test-tube", "refresh-cw", "icon-code",
+                "hash", "rotate-ccw", "eraser", "wrench", "test-tube", "refresh-cw", "icon-code",
                 "eye", "lightbulb", "arrow-up-down"
             };
             foreach (var name in lucideNames)
@@ -187,7 +190,7 @@ namespace Loupedeck.AgentDeckPlugin.Folders
             if (pos >= AgentStartPos && pos < AgentStartPos + AgentSlots)
             {
                 var ai = _dashPage * AgentSlots + (pos - AgentStartPos);
-                var agents = this.Plugin.State.Agents;
+                var agents = GetSortedAgents();
                 if (ai >= agents.Count) return;
                 var agent = agents[ai];
                 this.Plugin.State.SelectedAgentId = agent.Id;
@@ -221,7 +224,7 @@ namespace Loupedeck.AgentDeckPlugin.Folders
             if (pos >= AgentStartPos && pos < AgentStartPos + AgentSlots)
             {
                 var ai = _dashPage * AgentSlots + (pos - AgentStartPos);
-                var agents = this.Plugin.State.Agents;
+                var agents = GetSortedAgents();
                 return ai < agents.Count ? TileAgent(agents[ai], sz) : Empty(sz);
             }
 
@@ -230,8 +233,8 @@ namespace Loupedeck.AgentDeckPlugin.Folders
 
         // ══════════════════════════════════════════════════════════
         // SKILLS
-        //   [BACK] [Continue] [Commit] [Restart] [Chkpt]
-        //   [Diff] [MODE] [END]
+        //   [BACK] [END] [Commit] [Review] [Clear]
+        //   [Diff] [MODE] [Continue]
         // ══════════════════════════════════════════════════════════
 
         private void OnSkills(Int32 pos)
@@ -241,26 +244,22 @@ namespace Loupedeck.AgentDeckPlugin.Folders
 
             var a = this.Plugin.State.GetSelectedAgent();
             if (a == null) { GoBack(); return; }
-            // pos 0 = BACK, pos 1-5 = Skills[0-4], pos 6 = MODE, pos 7 = END
+            // pos 0 = BACK, pos 1 = END, pos 2-5 = Skills[0-3], pos 6 = MODE, pos 7 = Continue
             if (pos == 0) { GoBack(); return; }
-            if (pos >= 1 && pos <= 5)
+            if (pos == 1) { _ = this.Plugin.BridgeClient.SendCommand(a.Id, "kill"); GoBack(); return; }
+            if (pos >= 2 && pos <= 5)
             {
-                var skill = Skills[pos - 1];
+                var skill = Skills[pos - 2];
                 switch (skill.id)
                 {
-                    case "continue":
-                        if (a.Status == AgentStatus.Waiting)
-                            _ = this.Plugin.BridgeClient.SendCommand(a.Id, "approve");
-                        else
-                            _ = this.Plugin.BridgeClient.SendSkill(a.Id, "custom", "continue");
-                        GoBack();
-                        break;
                     case "commit":
                         _ = this.Plugin.BridgeClient.SendSkill(a.Id, "commit"); GoBack(); break;
                     case "review":
                         _ = this.Plugin.BridgeClient.SendSkill(a.Id, "custom", "/simplify review the changes"); GoBack(); break;
-                    case "checkpoint":
-                        _ = this.Plugin.BridgeClient.SendCommand(a.Id, "checkpoint"); break;
+                    // case "checkpoint":
+                    //     _ = this.Plugin.BridgeClient.SendCommand(a.Id, "checkpoint"); break;
+                    case "clear":
+                        _ = this.Plugin.BridgeClient.SendSkill(a.Id, "custom", "/clear"); GoBack(); break;
                     case "diff":
                         _ = this.Plugin.BridgeClient.SendFocusView("diff", a.Id); break;
                 }
@@ -269,18 +268,25 @@ namespace Loupedeck.AgentDeckPlugin.Folders
             switch (pos)
             {
                 case 6: _ = this.Plugin.BridgeClient.SendCommand(a.Id, "cycle_mode"); break;
-                case 7: _ = this.Plugin.BridgeClient.SendCommand(a.Id, "kill"); GoBack(); break;
+                case 7:
+                    if (a.Status == AgentStatus.Waiting)
+                        _ = this.Plugin.BridgeClient.SendCommand(a.Id, "approve");
+                    else
+                        _ = this.Plugin.BridgeClient.SendSkill(a.Id, "custom", "continue");
+                    GoBack();
+                    break;
             }
         }
 
         private BitmapImage DrawSkills(Int32 pos, Int32 sz)
         {
             if (pos == 0) return TileCtrl("chevron-left", "BACK", new BitmapColor(50, 50, 50), sz);
-            if (pos >= 1 && pos <= 5) { var s = Skills[pos - 1]; return TileCtrl(s.lucide, s.label, s.color, sz); }
+            if (pos == 1) return TileCtrl("icon-x", "END", new BitmapColor(180, 40, 40), sz);
+            if (pos >= 2 && pos <= 5) { var s = Skills[pos - 2]; return TileCtrl(s.lucide, s.label, s.color, sz); }
             return pos switch
             {
                 6 => TileCtrl("settings", "MODE", new BitmapColor(45, 138, 120), sz),
-                7 => TileCtrl("icon-x", "END", new BitmapColor(180, 40, 40), sz),
+                7 => TileCtrl("play", "Continue", new BitmapColor(30, 120, 50), sz),
                 _ => Empty(sz)
             };
         }
@@ -426,11 +432,17 @@ namespace Loupedeck.AgentDeckPlugin.Folders
 
         private void SortAgentsFirst(AgentStatus status)
         {
-            var agents = this.Plugin.State.Agents;
-            var sorted = agents.OrderByDescending(a => a.Status == status).ToList();
-            agents.Clear();
-            foreach (var a in sorted) agents.Add(a);
+            _sortByStatus = status;
             _dashPage = 0;
+        }
+
+        /// Returns agents with persistent sort applied (if any).
+        private List<AgentSession> GetSortedAgents()
+        {
+            var agents = this.Plugin.State.Agents;
+            if (_sortByStatus is AgentStatus s)
+                return agents.OrderByDescending(a => a.Status == s).ToList();
+            return agents;
         }
 
         // ── Navigation & Refresh ────────────────────────────────
