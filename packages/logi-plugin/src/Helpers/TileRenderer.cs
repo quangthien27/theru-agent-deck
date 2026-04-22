@@ -43,15 +43,16 @@ namespace Loupedeck.AgentDeckPlugin.Helpers
         };
 
         /// Control tile — Lucide icon + label, vertically centered as a tight unit.
+        /// Transparent background (bg retained for API compatibility, ignored).
         internal static BitmapImage TileCtrl(String lucideOrText, String label, BitmapColor bg, Int32 sz)
         {
             EnsureLoaded();
             using var b = new BitmapBuilder(sz, sz);
-            b.Clear(bg);
+            b.Clear(BitmapColor.Transparent);
 
-            var iconSz = sz * 34 / 100;
-            var labelH = sz * 18 / 100;
-            var gap = sz * 2 / 100;
+            var iconSz = sz * 52 / 100;
+            var labelH = sz * 24 / 100;
+            var gap = sz * 3 / 100;
             var totalH = iconSz + gap + labelH;
             var startY = (sz - totalH) / 2;
 
@@ -61,11 +62,11 @@ namespace Loupedeck.AgentDeckPlugin.Helpers
             }
             else
             {
-                b.DrawText(lucideOrText, 0, startY, sz, iconSz, BitmapColor.White, sz / 3);
+                b.DrawText(lucideOrText, 0, startY, sz, iconSz, BitmapColor.White, sz * 40 / 100);
             }
 
             b.DrawText(label, 0, startY + iconSz + gap, sz, labelH,
-                new BitmapColor(210, 210, 220), sz / 6);
+                new BitmapColor(230, 230, 240), sz * 22 / 100);
 
             return b.ToImage();
         }
@@ -74,13 +75,12 @@ namespace Loupedeck.AgentDeckPlugin.Helpers
         internal static BitmapImage TileCtrlDimmed(String lucideOrText, String label, BitmapColor bg, Int32 sz)
         {
             EnsureLoaded();
-            var dimBg = new BitmapColor(bg.R / 3, bg.G / 3, bg.B / 3);
             using var b = new BitmapBuilder(sz, sz);
-            b.Clear(dimBg);
+            b.Clear(BitmapColor.Transparent);
 
-            var iconSz = sz * 34 / 100;
-            var labelH = sz * 18 / 100;
-            var gap = sz * 2 / 100;
+            var iconSz = sz * 52 / 100;
+            var labelH = sz * 24 / 100;
+            var gap = sz * 3 / 100;
             var totalH = iconSz + gap + labelH;
             var startY = (sz - totalH) / 2;
 
@@ -91,11 +91,11 @@ namespace Loupedeck.AgentDeckPlugin.Helpers
             else
             {
                 b.DrawText(lucideOrText, 0, startY, sz, iconSz,
-                    new BitmapColor(255, 255, 255, 80), sz / 3);
+                    new BitmapColor(255, 255, 255, 110), sz * 40 / 100);
             }
 
             b.DrawText(label, 0, startY + iconSz + gap, sz, labelH,
-                new BitmapColor(150, 150, 160), sz / 6);
+                new BitmapColor(140, 140, 150), sz * 22 / 100);
 
             return b.ToImage();
         }

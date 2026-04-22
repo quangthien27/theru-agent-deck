@@ -10,7 +10,7 @@ namespace Loupedeck.AgentDeckPlugin.Commands
         private new AgentDeckPlugin Plugin => (AgentDeckPlugin)base.Plugin;
 
         public QuickPromptCommand()
-            : base("Quick Prompt", "Quick Prompt — Send a custom prompt to active agent", "Agents")
+            : base("Quick Prompt", "Quick Prompt — Send a custom prompt to active agent", "Agent Actions")
         {
             this.MakeProfileAction("text;Enter prompt to send:");
         }

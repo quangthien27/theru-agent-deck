@@ -154,6 +154,15 @@ function isClaudeBusy(lastLines: string[], recentLower: string): boolean {
   if (tail.replace(/\s/g, '').endsWith('checkingforupdates')) {
     return false;
   }
+  // Idle input box visible in the very tail (last ~400 chars) → not busy.
+  // Claude's TUI uses cursor positioning to update the "thinking ... tokens"
+  // status line in place, so stale fragments linger in the buffer even after
+  // the agent returns to the ❯ prompt. The boxed prompt is a reliable signal
+  // that Claude is parked at idle regardless of what precedes it.
+  const veryTail400 = recentLower.slice(-400);
+  if (/[│┃]\s+[>❯]\s/.test(veryTail400)) {
+    return false;
+  }
   // If interrupted or showing a prompt/selection UI in the tail, not busy — stale spinners linger
   if (tail.includes('interrupted') || tail.includes('what should claude do instead') || tail.includes('whatshouldclaudodoinstead')) {
     return false;
@@ -274,6 +283,9 @@ function isClaudeIdle(lastLines: string[], recentContent: string): boolean {
     // (e.g. "accept edits on (shift+tab to cycle) ⧉ In foo.ts ❯").
     // Check if line ends with the prompt character.
     if (clean.endsWith(' ❯') || clean.endsWith(' >')) { hasPrompt = true; break; }
+    // Boxed input prompt: "│ > ..." or "│ ❯ ..." — Claude's idle input box wraps
+    // the prompt in box-drawing chars, so it doesn't end with the prompt char.
+    if (/^[│┃]\s+[>❯]\s/.test(clean)) { hasPrompt = true; break; }
   }
 
   // NOTE: The permission mode bar ("accept edits on (shift+tab to cycle)") and

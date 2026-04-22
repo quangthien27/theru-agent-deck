@@ -11,7 +11,7 @@ namespace Loupedeck.AgentDeckPlugin.Commands
         private new AgentDeckPlugin Plugin => (AgentDeckPlugin)base.Plugin;
 
         public AgentStatusCommand()
-            : base("Agents Status", "Agents Status — Fleet overview with status dots", "Agents") { }
+            : base("Agents Status", "Agents Status — Fleet overview with status dots", "Agent Actions") { }
 
         protected override void RunCommand(String actionParameter)
         {
@@ -37,27 +37,27 @@ namespace Loupedeck.AgentDeckPlugin.Commands
             var e = agents.Count(a => a.Status == AgentStatus.Error);
 
             using var b = new BitmapBuilder(sz, sz);
-            b.Clear(new BitmapColor(40, 50, 60));
+            b.Clear(BitmapColor.Transparent);
 
             // TileCtrl-matching layout
-            var iconSz = sz * 34 / 100;
-            var labelH = sz * 18 / 100;
-            var gap = sz * 2 / 100;
+            var iconSz = sz * 52 / 100;
+            var labelH = sz * 24 / 100;
+            var gap = sz * 3 / 100;
             var totalH = iconSz + gap + labelH;
             var startY = (sz - totalH) / 2;
 
             // Count number — nudged down to sit close to label
-            b.DrawText($"{t}", 0, startY + iconSz * 20 / 100, sz, iconSz * 80 / 100,
-                new BitmapColor(200, 220, 255), sz / 3);
+            b.DrawText($"{t}", 0, startY + iconSz * 15 / 100, sz, iconSz * 85 / 100,
+                new BitmapColor(210, 225, 255), sz * 50 / 100);
 
             // Label
             var labelY = startY + iconSz + gap;
             b.DrawText("AGENTS", 0, labelY, sz, labelH,
-                new BitmapColor(210, 210, 220), sz / 6);
+                new BitmapColor(230, 230, 240), sz * 22 / 100);
 
             // Status dots — horizontal row below label
-            var dotSz = sz * 6 / 100;
-            var dotGap = sz * 4 / 100;
+            var dotSz = sz * 8 / 100;
+            var dotGap = sz * 5 / 100;
             var dotsWidth = dotSz * 3 + dotGap * 2;
             var dotX = (sz - dotsWidth) / 2;
             var dotY = labelY + labelH + sz * 3 / 100;

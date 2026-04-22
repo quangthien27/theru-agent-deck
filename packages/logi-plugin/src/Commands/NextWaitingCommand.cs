@@ -11,7 +11,7 @@ namespace Loupedeck.AgentDeckPlugin.Commands
         private new AgentDeckPlugin Plugin => (AgentDeckPlugin)base.Plugin;
 
         public NextWaitingCommand()
-            : base("Next Waiting", "Next Waiting — Focus next waiting agent", "Controls") { }
+            : base("Next Waiting", "Next Waiting — Focus next waiting agent", "Navigation") { }
 
         protected override void RunCommand(String actionParameter)
         {

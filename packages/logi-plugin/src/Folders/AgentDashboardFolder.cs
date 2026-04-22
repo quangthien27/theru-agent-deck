@@ -28,6 +28,10 @@ namespace Loupedeck.AgentDeckPlugin.Folders
         private DateTime _viewSwitchTime = DateTime.MinValue;
         private const Int32 CooldownMs = 700;
 
+        // Skills view auto-close: return to dashboard after inactivity
+        private System.Threading.Timer _skillsIdleTimer;
+        private const Int32 SkillsIdleMs = 60_000;
+
         // Persistent sort: null = insertion order, otherwise sort that status first
         private AgentStatus? _sortByStatus = null;
 
@@ -71,7 +75,7 @@ namespace Loupedeck.AgentDeckPlugin.Folders
         public AgentDashboardFolder()
         {
             this.DisplayName = "AgentDeck";
-            this.GroupName = "Agents";
+            this.GroupName = "Apps";
         }
 
         public override PluginDynamicFolderNavigation GetNavigationArea(DeviceType _)
@@ -92,6 +96,7 @@ namespace Loupedeck.AgentDeckPlugin.Folders
         {
             if (this.Plugin.ActiveFolder == this)
                 this.Plugin.ActiveFolder = null;
+            StopSkillsIdleTimer();
             return true;
         }
 
@@ -202,6 +207,7 @@ namespace Loupedeck.AgentDeckPlugin.Folders
                     _lastTapPos = -1;
                     _view = "skills";
                     _viewSwitchTime = DateTime.UtcNow;
+                    StartSkillsIdleTimer();
                     Refresh();
                     return;
                 }
@@ -241,6 +247,9 @@ namespace Loupedeck.AgentDeckPlugin.Folders
         {
             // Block input during cooldown to prevent accidental third-tap
             if ((DateTime.UtcNow - _viewSwitchTime).TotalMilliseconds < CooldownMs) return;
+
+            // Any tile press resets idle timer
+            StartSkillsIdleTimer();
 
             var a = this.Plugin.State.GetSelectedAgent();
             if (a == null) { GoBack(); return; }
@@ -447,7 +456,29 @@ namespace Loupedeck.AgentDeckPlugin.Folders
 
         // ── Navigation & Refresh ────────────────────────────────
 
-        private void GoBack() { _view = _previousView ?? "dashboard"; _previousView = "dashboard"; Refresh(); }
+        private void GoBack() { _view = _previousView ?? "dashboard"; _previousView = "dashboard"; StopSkillsIdleTimer(); Refresh(); }
+
+        private void StartSkillsIdleTimer()
+        {
+            if (_skillsIdleTimer == null)
+                _skillsIdleTimer = new System.Threading.Timer(_ => OnSkillsIdleTimeout(), null, SkillsIdleMs, System.Threading.Timeout.Infinite);
+            else
+                _skillsIdleTimer.Change(SkillsIdleMs, System.Threading.Timeout.Infinite);
+        }
+
+        private void StopSkillsIdleTimer()
+        {
+            _skillsIdleTimer?.Change(System.Threading.Timeout.Infinite, System.Threading.Timeout.Infinite);
+        }
+
+        private void OnSkillsIdleTimeout()
+        {
+            if (_view != "skills") return;
+            PluginLog.Info("[FOLDER] Skills view idle timeout — returning to dashboard");
+            _view = "dashboard";
+            _previousView = "dashboard";
+            Refresh();
+        }
 
         private void Refresh()
         {
