@@ -34,21 +34,24 @@ The Dynamic Folder takes over all 9 LCD buttons:
 
 ```
 ┌───────────┬───────────┬───────────┐
-│ 🟢 PREP   │ 🟡 API    │ 🔴 SNAP   │  Up to 5 agent tiles
+│   EXIT    │    +      │  4 ●◐✕    │  Row 1: controls
+│           │   NEW     │ SESSIONS  │
+├───────────┼───────────┼───────────┤
+│ 🟢 PREP   │ 🟡 API    │ 🔴 SNAP   │  Up to 6 agent tiles
 │ idle      │ working   │ INPUT!    │  Color-coded by status
 ├───────────┼───────────┼───────────┤
-│ 🟢 DOCS   │           │    +      │
-│ idle      │           │   NEW     │
-├───────────┼───────────┼───────────┤
-│           │  4 ●◐✕    │   MENU    │
-│           │ SESSIONS  │           │
+│ 🟢 DOCS   │           │           │
+│ idle      │           │           │
 └───────────┴───────────┴───────────┘
 ```
 
-- **Single tap** any tile → editor window foregrounds, terminal focuses
-- **Double tap** any tile → skills page (Commit, Restart, Checkpoint, Diff, Continue, Mode, End)
-- **NEW** → agent type picker with optional `git worktree` isolation
-- Dial rotates to scroll when you have more than 5 agents
+- **Tile 1 (EXIT)** → closes the Dynamic Folder
+- **Tile 2 (NEW)** → agent type picker with optional `git worktree` isolation
+- **Tile 3 (SESSIONS)** → live count + status dots across all windows
+- **Tiles 4–9** → up to 6 agent tiles, color-coded by status
+- **Single tap** any agent tile → editor window foregrounds, terminal focuses
+- **Double tap** any agent tile → skills page (Commit, Restart, Checkpoint, Diff, Continue, Mode, End)
+- Dial rotates to scroll when you have more than 6 agents
 
 ### Dial — Diff Scrubbing
 
