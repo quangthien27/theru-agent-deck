@@ -18,7 +18,7 @@ description: Physical control surface for managing multiple AI coding agents
 pluginFileName: AgentDeckPlugin.dll
 
 # Plugin version.
-version: 0.1
+version: 2.0
 
 # Author of the plugin. The author can be a company or an individual developer.
 author: thien

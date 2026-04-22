@@ -2,7 +2,7 @@
   "name": "agentdeck",
   "displayName": "AgentDeck",
   "description": "Physical control surface for managing multiple AI coding agents via MX Creative Console",
-  "version": "0.1.0",
+  "version": "2.0.0",
   "publisher": "agentdeck",
   "engines": {
     "vscode": "^1.93.0"

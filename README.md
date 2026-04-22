@@ -101,7 +101,7 @@ Type `claude`, `gemini`, `aider`, `codex`, or `opencode` in any terminal — Age
 
 ### 1. Install the Logi Plugin
 
-1. Download `AgentDeck-<version>.lplug4` from [Releases](./releases), or build from source (see Development).
+1. Download `AgentDeck-<version>.lplug4` from [Releases](https://github.com/quangthien27/theru-agent-deck/releases), or build from source (see Development).
 2. Double-click the `.lplug4` file — Logi Options+ installs it automatically.
 3. Open **Logi Options+** → select your MX Creative Console.
 4. Drag the **Agent Deck** Dynamic Folder onto any LCD button.
@@ -118,7 +118,7 @@ open /Applications/Utilities/LogiPluginService.app
 
 ### 2. Install the VS Code Extension
 
-1. Download `agentdeck-<version>.vsix` from [Releases](./releases), or build from source.
+1. Download `agentdeck-<version>.vsix` from [Releases](https://github.com/quangthien27/theru-agent-deck/releases), or build from source.
 2. In VS Code / Windsurf / Cursor: **Extensions panel → ⋯ → Install from VSIX…** and select the file.
 3. Reload the window when prompted.
 4. (Optional) Open **Settings** and tune:
